@@ -9,10 +9,11 @@ import numpy as np
 import numpy.typing as npt
 from bm25s import BM25
 
+from semble.duplicates import _pair_key, _same_file_ranges_overlap, duplicate_score, score_duplicate_pair
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
 from semble.search import search_bm25, search_hybrid, search_semantic
-from semble.types import Chunk, Encoder, IndexStats, SearchMode, SearchResult
+from semble.types import Chunk, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
 
 
 class SembleIndex:
@@ -165,6 +166,175 @@ class SembleIndex:
         selector = self._get_selector_vector(filter_languages=[target.language]) if target.language else None
         results = search_semantic(target.content, self.model, self._semantic_index, self.chunks, top_k + 1, selector)
         return [r for r in results if r.chunk != target][:top_k]
+
+    def find_duplicates(
+        self,
+        *,
+        top_k: int = 5,
+        candidate_k: int = 12,
+        min_lines: int = 8,
+        min_score: float = 0.0,
+        filter_languages: list[str] | None = None,
+        filter_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        same_language: bool = True,
+    ) -> list[DuplicateResult]:
+        """Return ranked duplicate-code candidate pairs from indexed chunks.
+
+        :param top_k: Number of duplicate pairs to return.
+        :param candidate_k: Number of semantic neighbors to inspect per eligible chunk.
+        :param min_lines: Minimum content line count required for each side.
+        :param min_score: Minimum final duplicate score to return.
+        :param filter_languages: Optional exact language filters.
+        :param filter_paths: Optional repo-relative file or directory scopes to include.
+        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+        :param same_language: If True, only compare chunks in the left chunk's language.
+        :return: Ranked list of duplicate candidate pairs, best match first.
+        """
+        if not self.chunks or top_k <= 0:
+            return []
+
+        eligible = [
+            index
+            for index in self._duplicate_candidate_indices(filter_languages, filter_paths, exclude_paths)
+            if self._line_count(self.chunks[index]) >= min_lines
+        ]
+        if not eligible:
+            return []
+
+        candidate_k = max(candidate_k, 1)
+        pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult] = {}
+        for left_index in eligible:
+            left = self.chunks[left_index]
+            selector = self._duplicate_neighbor_selector(left, eligible, same_language=same_language)
+            if selector.size == 0:
+                continue
+
+            related = search_semantic(
+                left.content,
+                self.model,
+                self._semantic_index,
+                self.chunks,
+                min(candidate_k, len(selector)),
+                selector,
+            )
+            for result in related:
+                right = result.chunk
+                if right == left or _same_file_ranges_overlap(left, right):
+                    continue
+
+                signals = score_duplicate_pair(left, right, semantic_score=result.score)
+                score = duplicate_score(signals)
+                if score <= 0.0 or score < min_score:
+                    continue
+
+                result_left, result_right = self._ordered_duplicate_pair(left, right)
+                duplicate = DuplicateResult(left=result_left, right=result_right, score=score, signals=signals)
+                pair_key = _pair_key(left, right)
+                existing = pairs.get(pair_key)
+                if existing is None or self._duplicate_rank_key(duplicate) > self._duplicate_rank_key(existing):
+                    pairs[pair_key] = duplicate
+
+        return sorted(pairs.values(), key=self._duplicate_sort_key)[:top_k]
+
+    def _duplicate_candidate_indices(
+        self,
+        filter_languages: list[str] | None,
+        filter_paths: list[str] | None,
+        exclude_paths: list[str] | None,
+    ) -> list[int]:
+        """Return chunk indices eligible for duplicate discovery."""
+        eligible = set(range(len(self.chunks)))
+
+        if filter_languages:
+            language_indices: set[int] = set()
+            for language in filter_languages:
+                language_indices.update(self._language_mapping.get(language, []))
+            eligible &= language_indices
+
+        if filter_paths:
+            path_indices = {
+                index
+                for index, chunk in enumerate(self.chunks)
+                if self._path_in_scope(chunk.file_path, filter_paths)
+            }
+            eligible &= path_indices
+
+        if exclude_paths:
+            excluded = {
+                index
+                for index, chunk in enumerate(self.chunks)
+                if self._path_in_scope(chunk.file_path, exclude_paths)
+            }
+            eligible -= excluded
+
+        return sorted(eligible)
+
+    def _duplicate_neighbor_selector(
+        self,
+        left: Chunk,
+        eligible: list[int],
+        *,
+        same_language: bool,
+    ) -> npt.NDArray[np.int_]:
+        """Create a selector of eligible duplicate neighbors for a left chunk."""
+        indices = []
+        for index in eligible:
+            chunk = self.chunks[index]
+            if chunk == left:
+                continue
+            if same_language and left.language and chunk.language != left.language:
+                continue
+            indices.append(index)
+        return np.array(indices, dtype=np.int_)
+
+    @staticmethod
+    def _path_in_scope(file_path: str, scopes: list[str]) -> bool:
+        """Return whether a repo-relative path is inside any exact or directory scope."""
+        normalized_path = SembleIndex._normalize_scope_path(file_path)
+        for scope in scopes:
+            normalized_scope = SembleIndex._normalize_scope_path(scope)
+            if normalized_scope in {"", "."}:
+                return True
+            if normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/"):
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_scope_path(path: str) -> str:
+        """Normalize duplicate path scopes without touching the filesystem."""
+        normalized = path.replace("\\", "/").strip("/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized.rstrip("/")
+
+    @staticmethod
+    def _line_count(chunk: Chunk) -> int:
+        """Return the number of content lines in a chunk."""
+        return len(chunk.content.splitlines())
+
+    @staticmethod
+    def _ordered_duplicate_pair(left: Chunk, right: Chunk) -> tuple[Chunk, Chunk]:
+        """Return pair chunks in stable location order."""
+        left_key = (left.file_path, left.start_line, left.end_line)
+        right_key = (right.file_path, right.start_line, right.end_line)
+        return (left, right) if left_key <= right_key else (right, left)
+
+    @staticmethod
+    def _duplicate_rank_key(result: DuplicateResult) -> tuple[float, float, float]:
+        """Return the descending score key used to keep the best version of a pair."""
+        return (result.score, result.signals.semantic_score, result.signals.structural_score)
+
+    @staticmethod
+    def _duplicate_sort_key(result: DuplicateResult) -> tuple[float, float, float, str, str]:
+        """Return the final deterministic duplicate result sort key."""
+        return (
+            -result.score,
+            -result.signals.semantic_score,
+            -result.signals.structural_score,
+            result.left.location,
+            result.right.location,
+        )
 
     def _get_selector_vector(
         self, filter_languages: list[str] | None = None, filter_paths: list[str] | None = None

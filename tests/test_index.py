@@ -1,17 +1,60 @@
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
+import numpy as np
+import numpy.typing as npt
 import pytest
+from vicinity.backends.basic import BasicArgs
 
 from semble import SembleIndex
 from semble.index.create import create_index_from_path
-from semble.types import Encoder
+from semble.index.dense import SelectableBasicBackend
+from semble.types import Chunk, DuplicateResult, Encoder
 
 
 @pytest.fixture
 def indexed_index(mock_model: Any, tmp_project: Path) -> SembleIndex:
     """SembleIndex built from tmp_project."""
     return SembleIndex.from_path(tmp_project, model=mock_model)
+
+
+class _ConstantModel:
+    """Test encoder that makes every semantic query equally similar."""
+
+    def encode(self, texts: list[str], /) -> npt.NDArray[np.float32]:
+        """Return a unit vector for each text."""
+        vectors = np.zeros((len(texts), 4), dtype=np.float32)
+        vectors[:, 0] = 1.0
+        return vectors
+
+
+def _chunk(
+    content: str,
+    file_path: str,
+    *,
+    start_line: int = 1,
+    language: str | None = "python",
+) -> Chunk:
+    """Create a Chunk with line numbers matching its content by default."""
+    return Chunk(
+        content=content,
+        file_path=file_path,
+        start_line=start_line,
+        end_line=start_line + len(content.splitlines()) - 1,
+        language=language,
+    )
+
+
+def _duplicate_index(chunks: list[Chunk]) -> SembleIndex:
+    """Build a lightweight duplicate-test index without loading a real model."""
+    if chunks:
+        embeddings = np.zeros((len(chunks), 4), dtype=np.float32)
+        embeddings[:, 0] = 1.0
+        semantic_index = SelectableBasicBackend(embeddings, BasicArgs())
+    else:
+        semantic_index = MagicMock()
+    return SembleIndex(_ConstantModel(), MagicMock(), semantic_index, chunks)
 
 
 @pytest.mark.parametrize(
@@ -93,3 +136,218 @@ def test_find_related(indexed_index: SembleIndex) -> None:
     assert [r.chunk for r in indexed_index.find_related(result, top_k=3)] == [
         r.chunk for r in indexed_index.find_related(result.chunk, top_k=3)
     ]
+
+
+def test_find_duplicates_returns_ranked_pairs_and_respects_top_k() -> None:
+    """find_duplicates returns the strongest duplicate pair up to top_k."""
+    left = _chunk(
+        """\
+def total_price(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+""",
+        "src/prices.py",
+    )
+    renamed = _chunk(
+        """\
+def invoice_amount(products):
+    amount = 0
+    for product in products:
+        amount += product.cost
+    return amount
+""",
+        "src/invoices.py",
+    )
+    unrelated = _chunk(
+        """\
+class Renderer:
+    def render(self, page):
+        print(page.title)
+""",
+        "src/render.py",
+    )
+    index = _duplicate_index([left, renamed, unrelated])
+
+    results = index.find_duplicates(top_k=1, min_lines=1)
+
+    assert len(results) == 1
+    assert isinstance(results[0], DuplicateResult)
+    assert {results[0].left.file_path, results[0].right.file_path} == {"src/prices.py", "src/invoices.py"}
+
+
+def test_find_duplicates_excludes_overlapping_same_file_ranges() -> None:
+    """Same-file overlapping chunks are not returned as duplicate pairs."""
+    content = """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/prices.py", start_line=1),
+            _chunk(content, "src/prices.py", start_line=3),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+
+
+def test_find_duplicates_deduplicates_reversed_pairs_deterministically() -> None:
+    """A/B and B/A semantic candidates collapse into one stable pair."""
+    content = """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/b.py"),
+            _chunk(content, "src/a.py"),
+        ]
+    )
+
+    results = index.find_duplicates(top_k=10, min_lines=1)
+
+    assert len(results) == 1
+    assert results[0].left.file_path == "src/a.py"
+    assert results[0].right.file_path == "src/b.py"
+
+
+def test_find_duplicates_filters_path_scopes() -> None:
+    """Include and exclude path scopes match exact files and directory prefixes."""
+    content = """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py"),
+            _chunk(content, "src/nested/b.py"),
+            _chunk(content, "src/generated/c.py"),
+            _chunk(content, "tests/a_test.py"),
+        ]
+    )
+
+    results = index.find_duplicates(
+        top_k=10,
+        min_lines=1,
+        filter_paths=["./src/"],
+        exclude_paths=["src/generated/"],
+    )
+    result_paths = {results[0].left.file_path, results[0].right.file_path}
+
+    assert len(results) == 1
+    assert result_paths == {"src/a.py", "src/nested/b.py"}
+    assert index.find_duplicates(min_lines=1, filter_paths=["src/a.py"]) == []
+
+
+def test_find_duplicates_intersects_language_and_path_filters() -> None:
+    """Duplicate filters use intersection semantics instead of search's union selector."""
+    content = """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py", language="python"),
+            _chunk(content, "web/a.js", language="javascript"),
+        ]
+    )
+
+    assert (
+        index.find_duplicates(
+            min_lines=1,
+            filter_languages=["python"],
+            filter_paths=["web"],
+            same_language=False,
+        )
+        == []
+    )
+
+
+def test_find_duplicates_respects_language_filter() -> None:
+    """Language filters restrict both sides of returned duplicate pairs."""
+    content = """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py", language="python"),
+            _chunk(content, "src/b.py", language="python"),
+            _chunk(content, "src/a.js", language="javascript"),
+        ]
+    )
+
+    results = index.find_duplicates(top_k=10, min_lines=1, filter_languages=["python"], same_language=False)
+
+    assert len(results) == 1
+    assert results[0].left.language == "python"
+    assert results[0].right.language == "python"
+
+
+def test_find_duplicates_respects_min_lines_and_min_score() -> None:
+    """Minimum line and score thresholds filter duplicate candidates."""
+    content = """\
+def add(a, b):
+    return a + b
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py"),
+            _chunk(content, "src/b.py"),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=3) == []
+    assert len(index.find_duplicates(min_lines=1, min_score=1.0)) == 1
+    assert index.find_duplicates(min_lines=1, min_score=1.01) == []
+
+
+def test_find_duplicates_same_language_can_be_disabled() -> None:
+    """same_language=False allows cross-language duplicate candidates."""
+    content = """\
+def add(a, b):
+    return a + b
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py", language="python"),
+            _chunk(content, "src/a.js", language="javascript"),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+    cross_language = index.find_duplicates(min_lines=1, same_language=False)
+
+    assert len(cross_language) == 1
+    assert {cross_language[0].left.language, cross_language[0].right.language} == {"python", "javascript"}
+
+
+def test_find_duplicates_empty_or_non_positive_top_k_returns_empty() -> None:
+    """Empty indexes, singletons, and non-positive top_k return no duplicate pairs."""
+    assert _duplicate_index([]).find_duplicates() == []
+    assert _duplicate_index([_chunk("def add(a, b):\n    return a + b", "src/a.py")]).find_duplicates(min_lines=1) == []
+
+    index = _duplicate_index(
+        [
+            _chunk("def add(a, b):\n    return a + b", "src/a.py"),
+            _chunk("def add(a, b):\n    return a + b", "src/b.py"),
+        ]
+    )
+    assert index.find_duplicates(top_k=0, min_lines=1) == []
