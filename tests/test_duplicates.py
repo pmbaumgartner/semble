@@ -1,10 +1,14 @@
 import pytest
 
+import semble.duplicates as duplicates
 from semble import DuplicateResult, DuplicateSignals
 from semble.duplicates import (
     _jaccard,
+    _normalize_ast_label,
     _pair_key,
+    _parser_language_for_chunk,
     _same_file_ranges_overlap,
+    _weighted_structural_score,
     duplicate_score,
     score_duplicate_pair,
 )
@@ -71,8 +75,131 @@ def test_empty_or_comment_only_fingerprints_are_not_perfect_matches() -> None:
 
     assert _jaccard(set(), set()) == 0.0
     assert signals.token_jaccard == 0.0
+    assert signals.ast_type_jaccard is None
+    assert signals.ast_shape_jaccard is None
     assert signals.structural_score == 0.0
     assert duplicate_score(signals) == 0.0
+
+
+def test_score_duplicate_pair_populates_ast_signals_when_parser_is_available() -> None:
+    """Parser-backed chunks include AST type and shape signals."""
+    if duplicates._parser_for_language("python") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    left = make_chunk(
+        """\
+def total_price(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+""",
+        "prices.py",
+    )
+    right = make_chunk(
+        """\
+def invoice_amount(products):
+    amount = 0
+    for product in products:
+        amount += product.cost
+    return amount
+""",
+        "invoices.py",
+    )
+
+    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+
+    assert signals.ast_type_jaccard is not None
+    assert signals.ast_shape_jaccard is not None
+    assert 0.0 <= signals.ast_type_jaccard <= 1.0
+    assert 0.0 <= signals.ast_shape_jaccard <= 1.0
+
+
+def test_structural_score_uses_weighted_ast_blend_when_available() -> None:
+    """Structural score blends token, AST type, and AST shape signals."""
+    if duplicates._parser_for_language("python") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    left = make_chunk(
+        """\
+def total_price(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+""",
+        "prices.py",
+    )
+    right = make_chunk(
+        """\
+def invoice_amount(products):
+    amount = 0
+    for product in products:
+        amount += product.cost
+    return amount
+""",
+        "invoices.py",
+    )
+
+    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+
+    assert signals.ast_type_jaccard is not None
+    assert signals.ast_shape_jaccard is not None
+    assert signals.structural_score == pytest.approx(
+        _weighted_structural_score(
+            token_jaccard=signals.token_jaccard,
+            ast_type_jaccard=signals.ast_type_jaccard,
+            ast_shape_jaccard=signals.ast_shape_jaccard,
+        )
+    )
+
+
+def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Missing parser support leaves AST signals unavailable and keeps token scoring."""
+    monkeypatch.setattr(duplicates, "_parser_for_language", lambda language: None)
+    left = make_chunk("def add(a, b):\n    return a + b", "left.py")
+    right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
+
+    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+
+    assert signals.ast_type_jaccard is None
+    assert signals.ast_shape_jaccard is None
+    assert signals.structural_score == signals.token_jaccard
+
+
+def test_score_duplicate_pair_falls_back_for_unsupported_language() -> None:
+    """Unsupported languages use token-only duplicate scoring."""
+    left = Chunk("def add(a, b):\n    return a + b", "left.txt", 1, 2, "text")
+    right = Chunk("def plus(x, y):\n    return x + y", "right.txt", 1, 2, "text")
+
+    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+
+    assert _parser_language_for_chunk("text") is None
+    assert signals.ast_type_jaccard is None
+    assert signals.ast_shape_jaccard is None
+    assert signals.structural_score == signals.token_jaccard
+
+
+@pytest.mark.parametrize(
+    ("node_type", "expected"),
+    [
+        ("identifier", "IDENT"),
+        ("property_identifier", "IDENT"),
+        ("number_literal", "NUMBER"),
+        ("decimal_integer_literal", "NUMBER"),
+        ("string_literal", "STRING"),
+        ("raw_string_literal", "STRING"),
+        ("true", "BOOL"),
+        ("false_literal", "BOOL"),
+        ("null_literal", "NULL"),
+        ("nil", "NULL"),
+        ("none", "NONE"),
+        ("function_definition", "function_definition"),
+    ],
+)
+def test_normalize_ast_label(node_type: str, expected: str) -> None:
+    """AST label normalization keeps structural categories language-neutral."""
+    assert _normalize_ast_label(node_type) == expected
 
 
 @pytest.mark.parametrize(
