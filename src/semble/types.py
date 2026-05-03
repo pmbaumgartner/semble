@@ -51,6 +51,27 @@ class SearchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DuplicateSignals:
+    """Similarity signals used to rank a duplicate candidate pair."""
+
+    semantic_score: float
+    structural_score: float
+    token_jaccard: float
+    ast_type_jaccard: float | None = None
+    ast_shape_jaccard: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateResult:
+    """A duplicate candidate pair with its final ranking score."""
+
+    left: Chunk
+    right: Chunk
+    score: float
+    signals: DuplicateSignals
+
+
+@dataclass(frozen=True, slots=True)
 class IndexStats:
     """Statistics about the current index state."""
 
