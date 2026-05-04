@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from semble.mcp import _IndexCache, create_server, serve
-from semble.types import Chunk, Encoder, SearchMode, SearchResult
+from semble.types import Chunk, DuplicateResult, DuplicateSignals, Encoder, SearchMode, SearchResult
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
 from tests.conftest import make_chunk
 
@@ -21,7 +21,7 @@ async def _call_tool(
     args: dict[str, Any],
     *,
     index_method: str,
-    index_return: list[SearchResult],
+    index_return: list[SearchResult | DuplicateResult],
     index_chunks: list[Chunk] | None = None,
     default_source: str | None = "/some/path",
 ) -> str:
@@ -40,6 +40,14 @@ async def _call_tool(
 def cache() -> _IndexCache:
     """An _IndexCache backed by a stub model."""
     return _IndexCache(model=MagicMock(spec=Encoder))
+
+
+def _duplicate_result() -> DuplicateResult:
+    """Return a representative duplicate result for MCP tests."""
+    left = make_chunk("def left():\n    return 1", "src/left.py")
+    right = make_chunk("def right():\n    return 1", "src/right.py")
+    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
+    return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
 
 
 def test_resolve_chunk() -> None:
@@ -148,10 +156,11 @@ async def test_index_cache_evicts_on_failure(cache: _IndexCache, tmp_path: Path)
     [
         ("search", {"query": "foo"}),
         ("find_related", {"file_path": "src/foo.py", "line": 10}),
+        ("find_duplicates", {}),
     ],
 )
 async def test_tool_no_repo_no_default(cache: _IndexCache, tool: str, args: dict[str, object]) -> None:
-    """Both tools return an error message when no repo and no default source are given."""
+    """Tools return an error message when no repo and no default source are given."""
     server = create_server(cache, default_source=None)
     result = await server.call_tool(tool, args)
     assert "No repo specified" in _tool_text(result)
@@ -163,10 +172,11 @@ async def test_tool_no_repo_no_default(cache: _IndexCache, tool: str, args: dict
     [
         ("search", {"query": "foo", "repo": "https://github.com/x/y"}),
         ("find_related", {"file_path": "src/foo.py", "line": 1, "repo": "https://github.com/x/y"}),
+        ("find_duplicates", {"repo": "https://github.com/x/y"}),
     ],
 )
 async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str, object]) -> None:
-    """Both tools return a friendly error message when indexing fails."""
+    """Tools return a friendly error message when indexing fails."""
     with patch("semble.mcp.SembleIndex.from_git", side_effect=RuntimeError("clone failed")):
         server = create_server(cache)
         result = await server.call_tool(tool, args)
@@ -224,6 +234,24 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             ["No chunk found"],
             id="find_related_unknown_file",
         ),
+        pytest.param(
+            "find_duplicates",
+            {"top_k": 2},
+            "find_duplicates",
+            [_duplicate_result()],
+            None,
+            ["Duplicate candidates", "src/left.py"],
+            id="find_duplicates_with_results",
+        ),
+        pytest.param(
+            "find_duplicates",
+            {},
+            "find_duplicates",
+            [],
+            None,
+            ["No duplicate candidates found."],
+            id="find_duplicates_no_results",
+        ),
     ],
 )
 async def test_tool_output(
@@ -231,14 +259,39 @@ async def test_tool_output(
     tool: str,
     args: dict[str, Any],
     method: str,
-    results: list[SearchResult],
+    results: list[SearchResult | DuplicateResult],
     chunks: list[Chunk] | None,
     expected_substrings: list[str],
 ) -> None:
-    """Search and find_related format results (or an empty-state message) through the server."""
+    """Tools format results (or an empty-state message) through the server."""
     text = await _call_tool(cache, tool, args, index_method=method, index_return=results, index_chunks=chunks)
     for substring in expected_substrings:
         assert substring in text
+
+
+@pytest.mark.anyio
+async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
+    """find_duplicates runs the duplicate scan through asyncio.to_thread with the public MCP options."""
+    fake_index = MagicMock()
+    with (
+        patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get,
+        patch("semble.mcp.asyncio.to_thread", new=AsyncMock(return_value=[_duplicate_result()])) as mock_to_thread,
+    ):
+        server = create_server(cache, default_source="/some/path")
+        result = await server.call_tool(
+            "find_duplicates",
+            {"top_k": 7, "language": "python", "min_lines": 4, "min_score": 0.25},
+        )
+
+    assert "Duplicate candidates" in _tool_text(result)
+    mock_get.assert_awaited_once_with("/some/path")
+    mock_to_thread.assert_awaited_once_with(
+        fake_index.find_duplicates,
+        top_k=7,
+        filter_languages=["python"],
+        min_lines=4,
+        min_score=0.25,
+    )
 
 
 @pytest.mark.anyio

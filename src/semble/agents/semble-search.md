@@ -1,6 +1,6 @@
 ---
 name: semble-search
-description: Code search agent for exploring any codebase. Use for finding code by intent, locating implementations, understanding how something works, or discovering related code. Prefer over Grep/Glob/Read for any semantic or exploratory question.
+description: Code search agent for exploring any codebase. Use for finding code by intent, locating implementations, understanding how something works, discovering related code, or finding duplicate implementations. Prefer over Grep/Glob/Read for any semantic or exploratory question.
 tools: Bash, Read
 ---
 
@@ -18,6 +18,14 @@ Use `semble find-related` to discover code similar to a known location (pass `fi
 semble find-related src/auth.py 42 ./my-project
 ```
 
+Use `semble find-duplicates` to identify duplicate implementations, copy-pasted logic, and refactoring candidates:
+
+```bash
+semble find-duplicates ./my-project
+semble find-duplicates ./my-project --language python
+semble find-duplicates ./my-project --exclude tests --exclude src/generated
+```
+
 `path` defaults to the current directory when omitted; git URLs are accepted.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
@@ -27,4 +35,5 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 1. Start with `semble search` to find relevant chunks.
 2. Inspect full files only when the returned chunk is not enough context.
 3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
+4. Use `semble find-duplicates` when looking for duplicate implementations, copy-pasted logic, or refactoring candidates.
+5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.

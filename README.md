@@ -49,6 +49,9 @@ results = index.search("save model to disk", top_k=3)
 # Find code similar to a specific result
 related = index.find_related(results[0], top_k=3)
 
+# Find duplicate-code candidates
+duplicates = index.find_duplicates(top_k=3)
+
 # Each result exposes the matched chunk
 result = results[0]
 result.chunk.file_path   # "model2vec/model.py"
@@ -119,6 +122,7 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 |------|-------------|
 | `search` | Search a codebase with a natural-language or code query. Pass `repo` as a git URL or local path. |
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
+| `find_duplicates` | Find duplicate implementations and refactoring candidates in a codebase. |
 
 ### Sub-agent support
 
@@ -153,6 +157,14 @@ Use `semble find-related` to discover code similar to a known location (pass `fi
 semble find-related src/auth.py 42 ./my-project
 ​```
 
+Use `semble find-duplicates` to identify duplicate implementations, copy-pasted logic, and refactoring candidates:
+
+​```bash
+semble find-duplicates ./my-project
+semble find-duplicates ./my-project --language python
+semble find-duplicates ./my-project --exclude tests --exclude src/generated
+​```
+
 `path` defaults to the current directory when omitted; git URLs are accepted.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
@@ -162,7 +174,8 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 1. Start with `semble search` to find relevant chunks.
 2. Inspect full files only when the returned chunk is not enough context.
 3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
+4. Use `semble find-duplicates` when looking for duplicate implementations, copy-pasted logic, or refactoring candidates.
+5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
 ```
 
 ## CLI
@@ -181,6 +194,18 @@ semble search "save model to disk" https://github.com/MinishLab/model2vec
 
 # Find code similar to a known location (file_path and line from a prior search result)
 semble find-related src/auth.py 42 ./my-project
+
+# Find duplicate-code candidates in a local repo
+semble find-duplicates ./my-project
+
+# Find duplicate-code candidates in a remote repo
+semble find-duplicates https://github.com/MinishLab/model2vec
+
+# Limit duplicate discovery to one language
+semble find-duplicates ./my-project --language python
+
+# Exclude tests and generated code from duplicate discovery
+semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
 `path` defaults to the current directory when omitted; git URLs are accepted.

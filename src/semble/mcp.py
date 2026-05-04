@@ -10,13 +10,97 @@ from pydantic import Field
 from semble.index import SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
-from semble.utils import _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_results, _format_results, _is_git_url, _resolve_chunk
 
 _REPO_DESCRIPTION = (
     "Git URL (e.g. https://github.com/org/repo) or local path to index and search. "
     "Required when no default index was configured at startup. "
     "The index is cached after the first call, so repeat queries are fast."
 )
+_NO_REPO_MESSAGE = (
+    "No repo specified and no default index. "
+    "Pass a git URL (https://github.com/...) or local path as `repo`."
+)
+
+
+async def _get_index_or_error(cache: _IndexCache, source: str | None) -> tuple[SembleIndex | None, str | None]:
+    """Return an index for source, or a user-facing MCP error message."""
+    if not source:
+        return None, _NO_REPO_MESSAGE
+    try:
+        return await cache.get(source), None
+    except Exception as exc:
+        return None, f"Failed to index {source!r}: {exc}"
+
+
+async def _search_codebase(
+    cache: _IndexCache,
+    source: str | None,
+    query: str,
+    mode: Literal["hybrid", "semantic", "bm25"],
+    top_k: int,
+) -> str:
+    """Search a codebase and format MCP text output."""
+    index, error = await _get_index_or_error(cache, source)
+    if error:
+        return error
+    assert index is not None
+
+    results = index.search(query, top_k=top_k, mode=mode)
+    if not results:
+        return "No results found."
+    return _format_results(f"Search results for: {query!r} (mode={mode})", results)
+
+
+async def _find_related_code(
+    cache: _IndexCache,
+    source: str | None,
+    file_path: str,
+    line: int,
+    top_k: int,
+) -> str:
+    """Find related code for a source location and format MCP text output."""
+    index, error = await _get_index_or_error(cache, source)
+    if error:
+        return error
+    assert index is not None
+
+    chunk = _resolve_chunk(index.chunks, file_path, line)
+    if chunk is None:
+        return (
+            f"No chunk found at {file_path}:{line}. "
+            "Make sure the file is indexed and the line number is within a known chunk."
+        )
+    results = index.find_related(chunk, top_k=top_k)
+    if not results:
+        return f"No related chunks found for {file_path}:{line}."
+    return _format_results(f"Chunks related to {file_path}:{line}", results)
+
+
+async def _find_duplicate_code(
+    cache: _IndexCache,
+    source: str | None,
+    top_k: int,
+    language: str | None,
+    min_lines: int,
+    min_score: float,
+) -> str:
+    """Find duplicate-code candidates and format MCP text output."""
+    index, error = await _get_index_or_error(cache, source)
+    if error:
+        return error
+    assert index is not None
+
+    results = await asyncio.to_thread(
+        index.find_duplicates,
+        top_k=top_k,
+        filter_languages=[language] if language else None,
+        min_lines=min_lines,
+        min_score=min_score,
+    )
+    if not results:
+        return "No duplicate candidates found."
+    return _format_duplicate_results("Duplicate candidates", results)
 
 
 def create_server(cache: _IndexCache, default_source: str | None = None) -> FastMCP:
@@ -26,6 +110,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         instructions=(
             "Instant code search for any local or GitHub repository. "
             "Call `search` to find relevant code; call `find_related` on a result to discover similar code elsewhere. "
+            "Call `find_duplicates` to identify duplicate implementations and refactoring candidates. "
             "For questions about a library (e.g. a PyPI/npm package), resolve the GitHub URL from your training "
             "knowledge and pass it as `repo`. "
             "Prefer these tools over Grep, Glob, or Read for any question about how code works."
@@ -47,20 +132,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
         Use this to find where something is implemented, understand a library, or locate related code.
         """
-        source = repo or default_source
-        if not source:
-            return (
-                "No repo specified and no default index. "
-                "Pass a git URL (https://github.com/...) or local path as `repo`."
-            )
-        try:
-            index = await cache.get(source)
-        except Exception as exc:
-            return f"Failed to index {source!r}: {exc}"
-        results = index.search(query, top_k=top_k, mode=mode)
-        if not results:
-            return "No results found."
-        return _format_results(f"Search results for: {query!r} (mode={mode})", results)
+        return await _search_codebase(cache, repo or default_source, query, mode, top_k)
 
     @server.tool()
     async def find_related(
@@ -77,26 +149,22 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         Use after `search` to explore related implementations or callers.
         Pass file_path and line from a prior search result.
         """
-        source = repo or default_source
-        if not source:
-            return (
-                "No repo specified and no default index. "
-                "Pass a git URL (https://github.com/...) or local path as `repo`."
-            )
-        try:
-            index = await cache.get(source)
-        except Exception as exc:
-            return f"Failed to index {source!r}: {exc}"
-        chunk = _resolve_chunk(index.chunks, file_path, line)
-        if chunk is None:
-            return (
-                f"No chunk found at {file_path}:{line}. "
-                "Make sure the file is indexed and the line number is within a known chunk."
-            )
-        results = index.find_related(chunk, top_k=top_k)
-        if not results:
-            return f"No related chunks found for {file_path}:{line}."
-        return _format_results(f"Chunks related to {file_path}:{line}", results)
+        return await _find_related_code(cache, repo or default_source, file_path, line, top_k)
+
+    @server.tool()
+    async def find_duplicates(
+        repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
+        top_k: Annotated[int, Field(description="Number of duplicate pairs to return.", ge=1)] = 5,
+        language: Annotated[str | None, Field(description="Only compare chunks in this language.")] = None,
+        min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
+        min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,
+    ) -> str:
+        """Find duplicate-code candidates in a codebase.
+
+        Use this to identify duplicate implementations, copy-pasted logic, and refactoring candidates.
+        Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
+        """
+        return await _find_duplicate_code(cache, repo or default_source, top_k, language, min_lines, min_score)
 
     return server
 
