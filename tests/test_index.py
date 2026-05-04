@@ -271,7 +271,6 @@ def total(items):
             min_lines=1,
             filter_languages=["python"],
             filter_paths=["web"],
-            same_language=False,
         )
         == []
     )
@@ -294,7 +293,7 @@ def total(items):
         ]
     )
 
-    results = index.find_duplicates(top_k=10, min_lines=1, filter_languages=["python"], same_language=False)
+    results = index.find_duplicates(top_k=10, min_lines=1, filter_languages=["python"])
 
     assert len(results) == 1
     assert results[0].left.language == "python"
@@ -319,8 +318,8 @@ def add(a, b):
     assert index.find_duplicates(min_lines=1, min_score=1.01) == []
 
 
-def test_find_duplicates_same_language_can_be_disabled() -> None:
-    """same_language=False allows cross-language duplicate candidates."""
+def test_find_duplicates_excludes_cross_language_pairs() -> None:
+    """Duplicate discovery only compares chunks with the same language."""
     content = """\
 def add(a, b):
     return a + b
@@ -333,10 +332,27 @@ def add(a, b):
     )
 
     assert index.find_duplicates(min_lines=1) == []
-    cross_language = index.find_duplicates(min_lines=1, same_language=False)
 
-    assert len(cross_language) == 1
-    assert {cross_language[0].left.language, cross_language[0].right.language} == {"python", "javascript"}
+
+def test_find_duplicates_allows_unknown_language_pairs() -> None:
+    """Unknown-language chunks compare only with other unknown-language chunks."""
+    content = """\
+def add(a, b):
+    return a + b
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.txt", language=None),
+            _chunk(content, "src/b.txt", language=None),
+            _chunk(content, "src/c.py", language="python"),
+        ]
+    )
+
+    results = index.find_duplicates(min_lines=1)
+
+    assert len(results) == 1
+    assert results[0].left.language is None
+    assert results[0].right.language is None
 
 
 def test_find_duplicates_empty_or_non_positive_top_k_returns_empty() -> None:

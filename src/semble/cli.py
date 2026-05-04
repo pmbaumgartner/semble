@@ -5,10 +5,10 @@ from importlib.resources import files
 from pathlib import Path
 
 from semble.index import SembleIndex
-from semble.utils import _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_results, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
-_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "init", "-h", "--help"})
+_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "find-duplicates", "init", "-h", "--help"})
 
 
 def main() -> None:
@@ -67,6 +67,15 @@ def _cli_main() -> None:
     related_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
     related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
 
+    duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code candidates.")
+    duplicates_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
+    duplicates_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of duplicate pairs (default: 5).")
+    duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
+    duplicates_p.add_argument("--include", action="append", dest="include_paths", help="File or directory scope to include.")
+    duplicates_p.add_argument("--exclude", action="append", dest="exclude_paths", help="File or directory scope to exclude.")
+    duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
+    duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
+
     init_p = sub.add_parser("init", help="Write .claude/agents/semble-search.md for Claude Code sub-agent support.")
     init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
 
@@ -95,3 +104,17 @@ def _cli_main() -> None:
             print(f"No related chunks found for {args.file_path}:{args.line}.")
         else:
             print(_format_results(f"Chunks related to {args.file_path}:{args.line}", results))
+
+    elif args.command == "find-duplicates":
+        results = index.find_duplicates(
+            top_k=args.top_k,
+            filter_languages=[args.language] if args.language else None,
+            filter_paths=args.include_paths,
+            exclude_paths=args.exclude_paths,
+            min_lines=args.min_lines,
+            min_score=args.min_score,
+        )
+        if not results:
+            print("No duplicate candidates found.")
+        else:
+            print(_format_duplicate_results("Duplicate candidates", results))

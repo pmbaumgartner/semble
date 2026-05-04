@@ -6,10 +6,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from semble.cli import _CLAUDE_FILE_PATH, _cli_main, _run_init, main
-from semble.types import SearchMode, SearchResult
+from semble.types import DuplicateResult, DuplicateSignals, SearchMode, SearchResult
 from tests.conftest import make_chunk
 
 _CLAUDE_AGENT_FILE = files("semble").joinpath("agents/semble-search.md").read_text(encoding="utf-8")
+
+
+def _duplicate_result() -> DuplicateResult:
+    left = make_chunk("def left():\n    return 1", "src/left.py")
+    right = make_chunk("def right():\n    return 1", "src/right.py")
+    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
+    return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
 
 
 @pytest.mark.parametrize(
@@ -95,6 +102,92 @@ def test_cli_find_related(
         assert expected_stderr in captured.err
 
 
+def test_cli_find_duplicates_maps_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_cli_main find-duplicates maps CLI options to index.find_duplicates."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = [_duplicate_result()]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "semble",
+            "find-duplicates",
+            "/some/path",
+            "-k",
+            "7",
+            "--language",
+            "python",
+            "--include",
+            "src",
+            "--include",
+            "lib",
+            "--exclude",
+            "tests",
+            "--exclude",
+            "src/generated",
+            "--min-lines",
+            "4",
+            "--min-score",
+            "0.25",
+        ],
+    )
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+        _cli_main()
+
+    fake_index.find_duplicates.assert_called_once_with(
+        top_k=7,
+        filter_languages=["python"],
+        filter_paths=["src", "lib"],
+        exclude_paths=["tests", "src/generated"],
+        min_lines=4,
+        min_score=0.25,
+    )
+    out = capsys.readouterr().out
+    assert "Duplicate candidates" in out
+    assert "src/left.py" in out
+    assert "semantic=0.900" in out
+
+
+def test_cli_find_duplicates_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_cli_main find-duplicates prints a Semble-style empty state."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "/some/path"])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+        _cli_main()
+
+    fake_index.find_duplicates.assert_called_once_with(
+        top_k=5,
+        filter_languages=None,
+        filter_paths=None,
+        exclude_paths=None,
+        min_lines=8,
+        min_score=0.0,
+    )
+    assert "No duplicate candidates found." in capsys.readouterr().out
+
+
+def test_cli_find_duplicates_uses_git_url(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """find-duplicates indexes git URLs through SembleIndex.from_git."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "https://github.com/org/repo"])
+    with patch("semble.cli.SembleIndex.from_git", return_value=fake_index) as mock_from_git:
+        _cli_main()
+
+    mock_from_git.assert_called_once_with("https://github.com/org/repo")
+    assert "No duplicate candidates found." in capsys.readouterr().out
+
+
 def test_init_creates_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """_run_init writes the agent file and prints its path."""
     monkeypatch.chdir(tmp_path)
@@ -150,10 +243,24 @@ def test_main_dispatches_to_cli(
     assert "query text" in capsys.readouterr().out
 
 
+def test_main_dispatches_find_duplicates_to_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """main() routes find-duplicates through the CLI dispatcher."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "/some/path"])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+        main()
+
+    assert "No duplicate candidates found." in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_stdout", "expect_system_exit"),
     [
-        (["semble", "--help"], "find-related", True),
+        (["semble", "--help"], "find-duplicates", True),
         (["semble", "search", "query", "/some/path"], "query", False),
     ],
 )

@@ -177,7 +177,6 @@ class SembleIndex:
         filter_languages: list[str] | None = None,
         filter_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
-        same_language: bool = True,
     ) -> list[DuplicateResult]:
         """Return ranked duplicate-code candidate pairs from indexed chunks.
 
@@ -188,7 +187,6 @@ class SembleIndex:
         :param filter_languages: Optional exact language filters.
         :param filter_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-        :param same_language: If True, only compare chunks in the left chunk's language.
         :return: Ranked list of duplicate candidate pairs, best match first.
         """
         if not self.chunks or top_k <= 0:
@@ -206,7 +204,7 @@ class SembleIndex:
         pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult] = {}
         for left_index in eligible:
             left = self.chunks[left_index]
-            selector = self._duplicate_neighbor_selector(left, eligible, same_language=same_language)
+            selector = self._duplicate_neighbor_selector(left, eligible)
             if selector.size == 0:
                 continue
 
@@ -274,8 +272,6 @@ class SembleIndex:
         self,
         left: Chunk,
         eligible: list[int],
-        *,
-        same_language: bool,
     ) -> npt.NDArray[np.int_]:
         """Create a selector of eligible duplicate neighbors for a left chunk."""
         indices = []
@@ -283,7 +279,7 @@ class SembleIndex:
             chunk = self.chunks[index]
             if chunk == left:
                 continue
-            if same_language and left.language and chunk.language != left.language:
+            if chunk.language != left.language:
                 continue
             indices.append(index)
         return np.array(indices, dtype=np.int_)
