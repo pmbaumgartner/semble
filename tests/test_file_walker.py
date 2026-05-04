@@ -87,3 +87,24 @@ def test_walk_files_prunes_dirs_outside_include_paths(tmp_path: Path, monkeypatc
 
     assert found == {"src/keep.py"}
     assert not any("docs" in v for v in visited[1:]), visited
+
+
+def test_walk_files_excludes_language_common_test_paths(tmp_path: Path) -> None:
+    """Test exclusion catches common non-Python test path conventions."""
+    files = [
+        "src/keep.go",
+        "src/foo_test.go",
+        "Tests/FooTest.php",
+        "src/FooTest.java",
+        "src/foo.spec.ts",
+        "src/test_helper.rb",
+    ]
+    for rel in files:
+        _touch(tmp_path / rel)
+
+    found = {
+        p.relative_to(tmp_path).as_posix()
+        for p in walk_files(tmp_path, frozenset({".go", ".php", ".java", ".ts", ".rb"}), include_tests=False)
+    }
+
+    assert found == {"src/keep.go"}

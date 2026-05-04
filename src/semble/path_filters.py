@@ -3,7 +3,7 @@ from __future__ import annotations
 from fnmatch import fnmatchcase
 
 _TEST_DIR_NAMES = frozenset({"tests", "test", "testing", "__tests__", "spec", "specs", "e2e"})
-_TEST_FILE_PATTERNS = ("test_*.py", "*_test.py", "*.test.*", "*.spec.*")
+_TEST_FILE_PATTERNS = ("test_*.*", "*_test.*", "*_tests.*", "*.test.*", "*.spec.*")
 
 
 def normalize_scope_path(path: str) -> str:
@@ -50,10 +50,13 @@ def is_test_path(file_path: str) -> bool:
     if not normalized:
         return False
     parts = normalized.split("/")
-    if any(part in _TEST_DIR_NAMES for part in parts[:-1]):
+    if any(part.lower() in _TEST_DIR_NAMES for part in parts[:-1]):
         return True
     filename = parts[-1]
-    return any(fnmatchcase(filename, pattern) for pattern in _TEST_FILE_PATTERNS)
+    normalized_filename = filename.lower()
+    return any(fnmatchcase(normalized_filename, pattern) for pattern in _TEST_FILE_PATTERNS) or _is_pascal_test_file(
+        filename
+    )
 
 
 def is_test_dir_path(dir_path: str) -> bool:
@@ -61,7 +64,12 @@ def is_test_dir_path(dir_path: str) -> bool:
     normalized = normalize_scope_path(dir_path)
     if not normalized:
         return False
-    return any(part in _TEST_DIR_NAMES for part in normalized.split("/"))
+    return any(part.lower() in _TEST_DIR_NAMES for part in normalized.split("/"))
+
+
+def _is_pascal_test_file(filename: str) -> bool:
+    stem = filename.rsplit(".", maxsplit=1)[0]
+    return stem.endswith(("Test", "Tests"))
 
 
 def path_is_included(
