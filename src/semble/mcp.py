@@ -81,6 +81,7 @@ async def _find_duplicate_code(
     cache: _IndexCache,
     source: str | None,
     top_k: int,
+    candidate_k: int,
     language: str | None,
     min_lines: int,
     min_score: float,
@@ -94,6 +95,7 @@ async def _find_duplicate_code(
     results = await asyncio.to_thread(
         index.find_duplicates,
         top_k=top_k,
+        candidate_k=candidate_k,
         filter_languages=[language] if language else None,
         min_lines=min_lines,
         min_score=min_score,
@@ -155,6 +157,10 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
     async def find_duplicates(
         repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
         top_k: Annotated[int, Field(description="Number of duplicate pairs to return.", ge=1)] = 5,
+        candidate_k: Annotated[
+            int,
+            Field(description="Semantic neighbors to inspect per chunk before duplicate scoring.", ge=1),
+        ] = 12,
         language: Annotated[str | None, Field(description="Only compare chunks in this language.")] = None,
         min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
         min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,
@@ -164,7 +170,15 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         Use this to identify duplicate implementations, copy-pasted logic, and refactoring candidates.
         Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
         """
-        return await _find_duplicate_code(cache, repo or default_source, top_k, language, min_lines, min_score)
+        return await _find_duplicate_code(
+            cache,
+            repo or default_source,
+            top_k,
+            candidate_k,
+            language,
+            min_lines,
+            min_score,
+        )
 
     return server
 

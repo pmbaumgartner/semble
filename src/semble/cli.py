@@ -70,6 +70,12 @@ def _cli_main() -> None:
     duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code candidates.")
     duplicates_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
     duplicates_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of duplicate pairs (default: 5).")
+    duplicates_p.add_argument(
+        "--candidate-k",
+        type=int,
+        default=12,
+        help="Semantic neighbors to inspect per chunk before scoring (default: 12).",
+    )
     duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
     duplicates_p.add_argument("--include", action="append", dest="include_paths", help="File or directory scope to include.")
     duplicates_p.add_argument("--exclude", action="append", dest="exclude_paths", help="File or directory scope to exclude.")
@@ -108,6 +114,7 @@ def _cli_main() -> None:
     elif args.command == "find-duplicates":
         results = index.find_duplicates(
             top_k=args.top_k,
+            candidate_k=args.candidate_k,
             filter_languages=[args.language] if args.language else None,
             include_paths=args.include_paths,
             exclude_paths=args.exclude_paths,

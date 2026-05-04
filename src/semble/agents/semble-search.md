@@ -23,6 +23,7 @@ Use `semble find-duplicates` to identify duplicate implementations, copy-pasted 
 ```bash
 semble find-duplicates ./my-project
 semble find-duplicates ./my-project --language python
+semble find-duplicates ./my-project --candidate-k 24
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 

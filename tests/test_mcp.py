@@ -280,7 +280,13 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
         server = create_server(cache, default_source="/some/path")
         result = await server.call_tool(
             "find_duplicates",
-            {"top_k": 7, "language": "python", "min_lines": 4, "min_score": 0.25},
+            {
+                "top_k": 7,
+                "candidate_k": 19,
+                "language": "python",
+                "min_lines": 4,
+                "min_score": 0.25,
+            },
         )
 
     assert "Duplicate candidates" in _tool_text(result)
@@ -288,6 +294,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
         top_k=7,
+        candidate_k=19,
         filter_languages=["python"],
         min_lines=4,
         min_score=0.25,

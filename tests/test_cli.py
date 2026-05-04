@@ -118,6 +118,8 @@ def test_cli_find_duplicates_maps_options(
             "/some/path",
             "-k",
             "7",
+            "--candidate-k",
+            "19",
             "--language",
             "python",
             "--include",
@@ -139,6 +141,7 @@ def test_cli_find_duplicates_maps_options(
 
     fake_index.find_duplicates.assert_called_once_with(
         top_k=7,
+        candidate_k=19,
         filter_languages=["python"],
         include_paths=["src", "lib"],
         exclude_paths=["tests", "src/generated"],
@@ -164,6 +167,7 @@ def test_cli_find_duplicates_empty_state(
 
     fake_index.find_duplicates.assert_called_once_with(
         top_k=5,
+        candidate_k=12,
         filter_languages=None,
         include_paths=None,
         exclude_paths=None,

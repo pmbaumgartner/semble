@@ -162,6 +162,7 @@ Use `semble find-duplicates` to identify duplicate implementations, copy-pasted 
 ​```bash
 semble find-duplicates ./my-project
 semble find-duplicates ./my-project --language python
+semble find-duplicates ./my-project --candidate-k 24
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ​```
 
@@ -203,6 +204,9 @@ semble find-duplicates https://github.com/MinishLab/model2vec
 
 # Limit duplicate discovery to one language
 semble find-duplicates ./my-project --language python
+
+# Inspect more semantic neighbors per chunk for higher duplicate recall
+semble find-duplicates ./my-project --candidate-k 24
 
 # Exclude tests and generated code from duplicate discovery
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
