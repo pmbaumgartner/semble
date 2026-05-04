@@ -1,4 +1,5 @@
 import contextlib
+from dataclasses import dataclass
 from pathlib import Path
 
 import bm25s
@@ -10,6 +11,27 @@ from semble.index.file_walker import filter_extensions, language_for_path, walk_
 from semble.index.sparse import enrich_for_bm25
 from semble.tokens import tokenize
 from semble.types import Chunk, Encoder
+
+
+@dataclass(frozen=True, slots=True)
+class IndexBuildOptions:
+    """Options controlling which files are included while building an index."""
+
+    extensions: frozenset[str] | None = None
+    ignore: frozenset[str] | None = None
+    include_text_files: bool = False
+    include_paths: list[str] | None = None
+    exclude_paths: list[str] | None = None
+    include_tests: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltIndex:
+    """Indexes and chunks produced by a filesystem scan."""
+
+    bm25: bm25s.BM25
+    semantic: SelectableBasicBackend
+    chunks: list[Chunk]
 
 
 def create_index_from_path(
@@ -37,17 +59,36 @@ def create_index_from_path(
     :raises ValueError: if no items were found, no index can be created.
     :return: A bm25 index, vicinity index and list of chunks
     """
-    extensions = filter_extensions(extensions, include_text_files=include_text_files)
+    options = IndexBuildOptions(
+        extensions=extensions,
+        ignore=ignore,
+        include_text_files=include_text_files,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        include_tests=include_tests,
+    )
+    built = build_index_from_path(path, model, options=options, display_root=display_root)
+    return built.bm25, built.semantic, built.chunks
 
+
+def build_index_from_path(
+    path: Path,
+    model: Encoder,
+    *,
+    options: IndexBuildOptions,
+    display_root: Path | None = None,
+) -> BuiltIndex:
+    """Create an index bundle from a resolved directory."""
+    extensions = filter_extensions(options.extensions, include_text_files=options.include_text_files)
     chunks: list[Chunk] = []
 
     for file_path in walk_files(
         path,
         extensions,
-        ignore,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        include_tests=include_tests,
+        options.ignore,
+        include_paths=options.include_paths,
+        exclude_paths=options.exclude_paths,
+        include_tests=options.include_tests,
     ):
         language = language_for_path(file_path)
         with contextlib.suppress(OSError):
@@ -67,4 +108,4 @@ def create_index_from_path(
     else:
         raise ValueError(f"No supported files found under {path}.")
 
-    return bm25_index, semantic_index, chunks
+    return BuiltIndex(bm25=bm25_index, semantic=semantic_index, chunks=chunks)

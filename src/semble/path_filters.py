@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 
 _TEST_DIR_NAMES = frozenset({"tests", "test", "testing", "__tests__", "spec", "specs", "e2e"})
@@ -16,32 +18,12 @@ def normalize_scope_path(path: str) -> str:
 
 def path_in_scope(file_path: str, scopes: list[str]) -> bool:
     """Return whether a repo-relative path is inside any exact or directory scope."""
-    normalized_path = normalize_scope_path(file_path)
-    for scope in scopes:
-        normalized_scope = normalize_scope_path(scope)
-        if normalized_scope in {"", "."}:
-            return True
-        if normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/"):
-            return True
-    return False
+    return _path_in_normalized_scopes(normalize_scope_path(file_path), _normalize_scopes(scopes) or ())
 
 
 def path_may_contain_scope(dir_path: str, scopes: list[str]) -> bool:
     """Return whether a repo-relative directory might contain an included scope."""
-    normalized_dir = normalize_scope_path(dir_path)
-    if normalized_dir in {"", "."}:
-        return True
-    for scope in scopes:
-        normalized_scope = normalize_scope_path(scope)
-        if normalized_scope in {"", "."}:
-            return True
-        if normalized_dir == normalized_scope:
-            return True
-        if normalized_dir.startswith(f"{normalized_scope}/"):
-            return True
-        if normalized_scope.startswith(f"{normalized_dir}/"):
-            return True
-    return False
+    return _dir_may_contain_normalized_scope(normalize_scope_path(dir_path), _normalize_scopes(scopes) or ())
 
 
 def is_test_path(file_path: str) -> bool:
@@ -80,8 +62,73 @@ def path_is_included(
     include_tests: bool = True,
 ) -> bool:
     """Return whether a repo-relative path passes include/exclude/test filters."""
-    if include_paths and not path_in_scope(file_path, include_paths):
-        return False
-    if exclude_paths and path_in_scope(file_path, exclude_paths):
-        return False
-    return include_tests or not is_test_path(file_path)
+    return PathFilter(include_paths, exclude_paths, include_tests=include_tests).includes(file_path)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class PathFilter:
+    """Compiled repo-relative include/exclude/test path filter."""
+
+    include_paths: tuple[str, ...] | None
+    exclude_paths: tuple[str, ...] | None
+    include_tests: bool
+
+    def __init__(
+        self,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
+        *,
+        include_tests: bool = True,
+    ) -> None:
+        """Normalize include and exclude scopes once for repeated path checks."""
+        object.__setattr__(self, "include_paths", _normalize_scopes(include_paths))
+        object.__setattr__(self, "exclude_paths", _normalize_scopes(exclude_paths))
+        object.__setattr__(self, "include_tests", include_tests)
+
+    def includes(self, file_path: str) -> bool:
+        """Return whether a repo-relative file path passes this filter."""
+        normalized_path = normalize_scope_path(file_path)
+        if self.include_paths and not _path_in_normalized_scopes(normalized_path, self.include_paths):
+            return False
+        if self.exclude_paths and _path_in_normalized_scopes(normalized_path, self.exclude_paths):
+            return False
+        return self.include_tests or not is_test_path(normalized_path)
+
+    def may_contain_dir(self, dir_path: str) -> bool:
+        """Return whether a repo-relative directory should be descended into."""
+        normalized_dir = normalize_scope_path(dir_path)
+        if self.exclude_paths and _path_in_normalized_scopes(normalized_dir, self.exclude_paths):
+            return False
+        if self.include_paths and not _dir_may_contain_normalized_scope(normalized_dir, self.include_paths):
+            return False
+        return self.include_tests or not is_test_dir_path(normalized_dir)
+
+
+def _normalize_scopes(scopes: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not scopes:
+        return None
+    return tuple(normalize_scope_path(scope) for scope in scopes)
+
+
+def _path_in_normalized_scopes(normalized_path: str, normalized_scopes: Sequence[str]) -> bool:
+    for normalized_scope in normalized_scopes:
+        if normalized_scope in {"", "."}:
+            return True
+        if normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/"):
+            return True
+    return False
+
+
+def _dir_may_contain_normalized_scope(normalized_dir: str, normalized_scopes: Sequence[str]) -> bool:
+    if normalized_dir in {"", "."}:
+        return True
+    for normalized_scope in normalized_scopes:
+        if normalized_scope in {"", "."}:
+            return True
+        if normalized_dir == normalized_scope:
+            return True
+        if normalized_dir.startswith(f"{normalized_scope}/"):
+            return True
+        if normalized_scope.startswith(f"{normalized_dir}/"):
+            return True
+    return False

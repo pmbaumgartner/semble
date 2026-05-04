@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pathspec import GitIgnoreSpec
 
-from semble.path_filters import is_test_dir_path, path_in_scope, path_is_included, path_may_contain_scope
+from semble.path_filters import PathFilter
 
 
 class FileCategory(str, Enum):
@@ -115,9 +115,7 @@ def _should_keep_dir(
     *,
     ignore_dirs: frozenset[str],
     gitignore: GitIgnoreSpec | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    include_tests: bool,
+    path_filter: PathFilter,
 ) -> bool:
     """Return whether os.walk should descend into a directory."""
     if dirname in ignore_dirs:
@@ -125,12 +123,7 @@ def _should_keep_dir(
     rel = (rel_dir / dirname).as_posix() + "/"
     if gitignore is not None and gitignore.match_file(rel):
         return False
-    rel_scope = rel.rstrip("/")
-    if exclude_paths and path_in_scope(rel_scope, exclude_paths):
-        return False
-    if include_paths and not path_may_contain_scope(rel_scope, include_paths):
-        return False
-    return include_tests or not is_test_dir_path(rel_scope)
+    return path_filter.may_contain_dir(rel.rstrip("/"))
 
 
 def _should_yield_file(
@@ -139,21 +132,14 @@ def _should_yield_file(
     *,
     extensions: frozenset[str],
     gitignore: GitIgnoreSpec | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    include_tests: bool,
+    path_filter: PathFilter,
 ) -> bool:
     """Return whether a file passes extension, gitignore, and duplicate path filters."""
     if file_path.suffix.lower() not in extensions:
         return False
     if gitignore is not None and gitignore.match_file(rel_file):
         return False
-    return path_is_included(
-        rel_file,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        include_tests=include_tests,
-    )
+    return path_filter.includes(rel_file)
 
 
 def walk_files(
@@ -180,6 +166,7 @@ def walk_files(
     """
     ignore_dirs = DEFAULT_IGNORED_DIRS | (ignore or frozenset())
     gitignore = _load_root_gitignore(root)
+    path_filter = PathFilter(include_paths, exclude_paths, include_tests=include_tests)
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
         # Prune in-place so os.walk doesn't descend into ignored trees.
@@ -190,9 +177,7 @@ def walk_files(
                 dirname,
                 ignore_dirs=ignore_dirs,
                 gitignore=gitignore,
-                include_paths=include_paths,
-                exclude_paths=exclude_paths,
-                include_tests=include_tests,
+                path_filter=path_filter,
             ):
                 kept.append(dirname)
         dirnames[:] = kept
@@ -204,8 +189,6 @@ def walk_files(
                 file_path,
                 extensions=extensions,
                 gitignore=gitignore,
-                include_paths=include_paths,
-                exclude_paths=exclude_paths,
-                include_tests=include_tests,
+                path_filter=path_filter,
             ):
                 yield file_path

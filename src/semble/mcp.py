@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateSearchOptions, SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
 from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
@@ -119,8 +119,7 @@ async def _find_duplicate_code(
         return error
     assert index is not None
 
-    clusters = await asyncio.to_thread(
-        index.find_duplicates,
+    options = DuplicateSearchOptions(
         top_k=top_k,
         candidate_k=candidate_k,
         filter_languages=[language] if language else None,
@@ -134,9 +133,28 @@ async def _find_duplicate_code(
         min_structural_score=min_structural_score,
         min_cluster_size=min_cluster_size,
     )
+    clusters = await asyncio.to_thread(
+        index.find_duplicates,
+        top_k=options.top_k,
+        candidate_k=options.candidate_k,
+        filter_languages=_list_or_none(options.filter_languages),
+        include_paths=_list_or_none(options.include_paths),
+        exclude_paths=_list_or_none(options.exclude_paths),
+        include_tests=options.include_tests,
+        include_data=options.include_data,
+        include_scaffolding=options.include_scaffolding,
+        min_lines=options.min_lines,
+        min_score=options.min_score,
+        min_structural_score=options.min_structural_score,
+        min_cluster_size=options.min_cluster_size,
+    )
     if not clusters:
         return "No duplicate clusters found."
     return _format_duplicate_clusters("Duplicate clusters", clusters)
+
+
+def _list_or_none(values: tuple[str, ...] | None) -> list[str] | None:
+    return list(values) if values is not None else None
 
 
 def create_server(

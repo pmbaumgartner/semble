@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from collections import defaultdict
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -19,13 +21,67 @@ from semble._duplicates import (
     duplicate_score,
     score_duplicate_features,
 )
-from semble.index.create import create_index_from_path
+from semble.index.create import IndexBuildOptions, build_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
-from semble.path_filters import normalize_scope_path, path_in_scope, path_is_included
+from semble.path_filters import PathFilter, normalize_scope_path, path_in_scope
 from semble.search import search_bm25, search_hybrid, search_semantic
 from semble.types import Chunk, DuplicateCluster, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
 
 DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class DuplicateSearchOptions:
+    """Normalized options for duplicate-code discovery."""
+
+    top_k: int
+    candidate_k: int
+    min_lines: int
+    min_score: float
+    min_structural_score: float
+    min_cluster_size: int
+    filter_languages: tuple[str, ...] | None
+    include_paths: tuple[str, ...] | None
+    exclude_paths: tuple[str, ...] | None
+    include_tests: bool
+    include_data: bool
+    include_scaffolding: bool
+
+    def __init__(
+        self,
+        *,
+        top_k: int = 5,
+        candidate_k: int = 12,
+        min_lines: int = 8,
+        min_score: float = 0.0,
+        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size: int = 2,
+        filter_languages: Sequence[str] | None = None,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
+        include_tests: bool = False,
+        include_data: bool = False,
+        include_scaffolding: bool = False,
+    ) -> None:
+        """Create normalized duplicate discovery options."""
+        object.__setattr__(self, "top_k", top_k)
+        object.__setattr__(self, "candidate_k", candidate_k)
+        object.__setattr__(self, "min_lines", min_lines)
+        object.__setattr__(self, "min_score", min_score)
+        object.__setattr__(self, "min_structural_score", min_structural_score)
+        object.__setattr__(self, "min_cluster_size", min_cluster_size)
+        object.__setattr__(self, "filter_languages", _tuple_or_none(filter_languages))
+        object.__setattr__(self, "include_paths", _tuple_or_none(include_paths))
+        object.__setattr__(self, "exclude_paths", _tuple_or_none(exclude_paths))
+        object.__setattr__(self, "include_tests", include_tests)
+        object.__setattr__(self, "include_data", include_data)
+        object.__setattr__(self, "include_scaffolding", include_scaffolding)
+
+
+def _tuple_or_none(values: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not values:
+        return None
+    return tuple(values)
 
 
 class SembleIndex:
@@ -106,27 +162,20 @@ class SembleIndex:
         :raises NotADirectoryError: If `path` exists but is not a directory.
         """
         model = model or load_model()
+        options = IndexBuildOptions(
+            extensions=extensions,
+            ignore=ignore,
+            include_text_files=include_text_files,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+        )
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
         if not path.is_dir():
             raise NotADirectoryError(f"Path is not a directory: {path}")
-        path = path.resolve()
-        bm25, vicinity, chunks = create_index_from_path(
-            path,
-            model=model,
-            extensions=extensions,
-            ignore=ignore,
-            include_text_files=include_text_files,
-            display_root=path,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            include_tests=include_tests,
-        )
-
-        index = SembleIndex(model, bm25, vicinity, chunks)
-
-        return index
+        return cls._from_resolved_path(path.resolve(), model, options)
 
     @classmethod
     def from_git(
@@ -173,21 +222,26 @@ class SembleIndex:
                 raise RuntimeError(f"git clone failed for {url!r}:\n{result.stderr.strip()}")
             model = model or load_model()
             resolved_path = Path(tmp_dir).resolve()
-            bm25, vicinity, chunks = create_index_from_path(
-                resolved_path,
-                model=model,
+            options = IndexBuildOptions(
                 extensions=extensions,
                 ignore=ignore,
                 include_text_files=include_text_files,
-                display_root=resolved_path,
                 include_paths=include_paths,
                 exclude_paths=exclude_paths,
                 include_tests=include_tests,
             )
+            return cls._from_resolved_path(resolved_path, model, options)
 
-            index = SembleIndex(model, bm25, vicinity, chunks)
-
-            return index
+    @classmethod
+    def _from_resolved_path(
+        cls,
+        path: Path,
+        model: Encoder,
+        options: IndexBuildOptions,
+    ) -> SembleIndex:
+        """Create a SembleIndex from a resolved directory and shared build options."""
+        built = build_index_from_path(path, model=model, options=options, display_root=path)
+        return cls(model, built.bm25, built.semantic, built.chunks)
 
     def find_related(self, source: Chunk | SearchResult, *, top_k: int = 5) -> list[SearchResult]:
         """Return chunks semantically similar to the given chunk or search result.
@@ -204,6 +258,7 @@ class SembleIndex:
     def find_duplicates(
         self,
         *,
+        options: DuplicateSearchOptions | None = None,
         top_k: int = 5,
         candidate_k: int = 12,
         min_lines: int = 8,
@@ -235,10 +290,43 @@ class SembleIndex:
         :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
         :return: Ranked list of duplicate clusters, best match first.
         """
-        if top_k <= 0:
+        search_options = options or DuplicateSearchOptions(
+            top_k=top_k,
+            candidate_k=candidate_k,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            min_cluster_size=min_cluster_size,
+            filter_languages=filter_languages,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            include_data=include_data,
+            include_scaffolding=include_scaffolding,
+        )
+        if search_options.top_k <= 0:
             return []
 
-        pairs = self._find_duplicate_pairs(
+        pairs = self._find_duplicate_pairs(options=search_options)
+        return cluster_duplicate_pairs(pairs, min_cluster_size=search_options.min_cluster_size)[: search_options.top_k]
+
+    def _find_duplicate_pairs(
+        self,
+        *,
+        options: DuplicateSearchOptions | None = None,
+        candidate_k: int = 12,
+        min_lines: int = 8,
+        min_score: float = 0.0,
+        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        filter_languages: list[str] | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        include_tests: bool = False,
+        include_data: bool = False,
+        include_scaffolding: bool = False,
+    ) -> list[DuplicateResult]:
+        """Return all sorted duplicate candidate pairs without top-k slicing."""
+        search_options = options or DuplicateSearchOptions(
             candidate_k=candidate_k,
             min_lines=min_lines,
             min_score=min_score,
@@ -250,39 +338,14 @@ class SembleIndex:
             include_data=include_data,
             include_scaffolding=include_scaffolding,
         )
-        return cluster_duplicate_pairs(pairs, min_cluster_size=min_cluster_size)[:top_k]
-
-    def _find_duplicate_pairs(
-        self,
-        *,
-        candidate_k: int,
-        min_lines: int,
-        min_score: float,
-        min_structural_score: float,
-        filter_languages: list[str] | None,
-        include_paths: list[str] | None,
-        exclude_paths: list[str] | None,
-        include_tests: bool,
-        include_data: bool,
-        include_scaffolding: bool,
-    ) -> list[DuplicateResult]:
-        """Return all sorted duplicate candidate pairs without top-k slicing."""
         if not self.chunks:
             return []
 
-        features_by_index, eligible = self._eligible_duplicate_features(
-            filter_languages=filter_languages,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            include_tests=include_tests,
-            include_data=include_data,
-            include_scaffolding=include_scaffolding,
-            min_lines=min_lines,
-        )
+        features_by_index, eligible = self._eligible_duplicate_features(search_options)
         if not eligible:
             return []
 
-        candidate_k = max(candidate_k, 1)
+        candidate_k = max(search_options.candidate_k, 1)
         pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult] = {}
 
         vectors = np.asarray(self._semantic_index.vectors)
@@ -292,8 +355,8 @@ class SembleIndex:
                 vectors=vectors,
                 features_by_index=features_by_index,
                 candidate_k=candidate_k,
-                min_score=min_score,
-                min_structural_score=min_structural_score,
+                min_score=search_options.min_score,
+                min_structural_score=search_options.min_structural_score,
                 pairs=pairs,
             )
 
@@ -301,26 +364,20 @@ class SembleIndex:
 
     def _eligible_duplicate_features(
         self,
-        *,
-        filter_languages: list[str] | None,
-        include_paths: list[str] | None,
-        exclude_paths: list[str] | None,
-        include_tests: bool,
-        include_data: bool,
-        include_scaffolding: bool,
-        min_lines: int,
+        options: DuplicateSearchOptions,
     ) -> tuple[dict[int, DuplicateFeatures], list[int]]:
         """Return duplicate features and indices for chunks that pass cheap eligibility gates."""
         features_by_index: dict[int, DuplicateFeatures] = {}
         eligible = []
-        for index in self._duplicate_candidate_indices(filter_languages, include_paths, exclude_paths, include_tests):
-            if self._line_count(self.chunks[index]) < min_lines:
+        path_filter = PathFilter(options.include_paths, options.exclude_paths, include_tests=options.include_tests)
+        for index in self._duplicate_candidate_indices(options.filter_languages, path_filter=path_filter):
+            if self._line_count(self.chunks[index]) < options.min_lines:
                 continue
             features = duplicate_features(self.chunks[index])
             if not duplicate_features_are_eligible(
                 features,
-                include_data=include_data,
-                include_scaffolding=include_scaffolding,
+                include_data=options.include_data,
+                include_scaffolding=options.include_scaffolding,
             ):
                 continue
             features_by_index[index] = features
@@ -408,10 +465,11 @@ class SembleIndex:
 
     def _duplicate_candidate_indices(
         self,
-        filter_languages: list[str] | None,
-        include_paths: list[str] | None,
-        exclude_paths: list[str] | None,
-        include_tests: bool,
+        filter_languages: Sequence[str] | None,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
+        include_tests: bool = False,
+        path_filter: PathFilter | None = None,
     ) -> list[int]:
         """Return chunk indices eligible for duplicate discovery."""
         eligible = set(range(len(self.chunks)))
@@ -422,15 +480,11 @@ class SembleIndex:
                 language_indices.update(self._language_mapping.get(language, []))
             eligible &= language_indices
 
+        path_filter = path_filter or PathFilter(include_paths, exclude_paths, include_tests=include_tests)
         path_indices = {
             index
             for index, chunk in enumerate(self.chunks)
-            if path_is_included(
-                chunk.file_path,
-                include_paths=include_paths,
-                exclude_paths=exclude_paths,
-                include_tests=include_tests,
-            )
+            if path_filter.includes(chunk.file_path)
         }
         eligible &= path_indices
 
@@ -513,10 +567,11 @@ class SembleIndex:
                 language_indices.update(self._language_mapping.get(language, []))
             eligible &= language_indices
 
+        path_filter = PathFilter(include_paths, exclude_paths)
         scoped_indices = {
             index
             for index, chunk in enumerate(self.chunks)
-            if path_is_included(chunk.file_path, include_paths=include_paths, exclude_paths=exclude_paths)
+            if path_filter.includes(chunk.file_path)
         }
         eligible &= scoped_indices
         return np.array(sorted(eligible), dtype=np.int_)

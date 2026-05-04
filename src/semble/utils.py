@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from semble.types import Chunk, DuplicateCluster, SearchResult
+from semble.types import Chunk, DuplicateCluster, DuplicateResult, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
@@ -34,9 +34,7 @@ def _format_results(header: str, results: list[SearchResult]) -> str:
     lines: list[str] = [header, ""]
     for i, r in enumerate(results, 1):
         lines.append(f"## {i}. {r.chunk.location}  [score={r.score:.3f}]")
-        lines.append("```")
-        lines.append(r.chunk.content.strip())
-        lines.append("```")
+        _append_fenced_block(lines, r.chunk.content)
         lines.append("")
     return "\n".join(lines)
 
@@ -46,16 +44,6 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
     lines: list[str] = [header, ""]
     for i, cluster in enumerate(clusters, 1):
         strongest = cluster.pairs[0]
-        signals = strongest.signals
-        signal_parts = [
-            f"semantic={signals.semantic_score:.3f}",
-            f"structural={signals.structural_score:.3f}",
-            f"tokens={signals.token_jaccard:.3f}",
-        ]
-        if signals.ast_type_jaccard is not None:
-            signal_parts.append(f"ast_type={signals.ast_type_jaccard:.3f}")
-        if signals.ast_shape_jaccard is not None:
-            signal_parts.append(f"ast_shape={signals.ast_shape_jaccard:.3f}")
 
         lines.append(
             f"## {i}. Duplicate cluster  [score={cluster.score:.3f}, "
@@ -66,7 +54,7 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
             lines.append(f"- {member.location}")
         lines.append("")
         lines.append(f"Strongest pair: {strongest.left.location} <-> {strongest.right.location}")
-        lines.append(" ".join(signal_parts))
+        lines.append(" ".join(_duplicate_signal_parts(strongest)))
         lines.append("")
         if len(cluster.pairs) > 1:
             lines.append("Additional pairs:")
@@ -74,13 +62,31 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
                 lines.append(f"- {pair.left.location} <-> {pair.right.location}  [score={pair.score:.3f}]")
             lines.append("")
         lines.append("Left:")
-        lines.append("```")
-        lines.append(strongest.left.content.strip())
-        lines.append("```")
+        _append_fenced_block(lines, strongest.left.content)
         lines.append("")
         lines.append("Right:")
-        lines.append("```")
-        lines.append(strongest.right.content.strip())
-        lines.append("```")
+        _append_fenced_block(lines, strongest.right.content)
         lines.append("")
     return "\n".join(lines)
+
+
+def _duplicate_signal_parts(result: DuplicateResult) -> list[str]:
+    """Return compact duplicate signal labels."""
+    signals = result.signals
+    parts = [
+        f"semantic={signals.semantic_score:.3f}",
+        f"structural={signals.structural_score:.3f}",
+        f"tokens={signals.token_jaccard:.3f}",
+    ]
+    if signals.ast_type_jaccard is not None:
+        parts.append(f"ast_type={signals.ast_type_jaccard:.3f}")
+    if signals.ast_shape_jaccard is not None:
+        parts.append(f"ast_shape={signals.ast_shape_jaccard:.3f}")
+    return parts
+
+
+def _append_fenced_block(lines: list[str], content: str) -> None:
+    """Append one plain fenced code block to a line buffer."""
+    lines.append("```")
+    lines.append(content.strip())
+    lines.append("```")

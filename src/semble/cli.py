@@ -4,11 +4,12 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateSearchOptions, SembleIndex
 from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
-_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "find-duplicates", "init", "-h", "--help"})
+_CLI_COMMANDS = ("search", "find-related", "find-duplicates", "init")
+_CLI_DISPATCH_ARGS = frozenset((*_CLI_COMMANDS, "-h", "--help"))
 
 
 def main() -> None:
@@ -49,7 +50,8 @@ def _run_init(*, force: bool = False) -> None:
     print(f"Created {dest}")
 
 
-def _cli_main() -> None:
+def build_cli_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for interactive CLI commands."""
     parser = argparse.ArgumentParser(prog="semble")
     sub = parser.add_subparsers(dest="command")
 
@@ -60,12 +62,14 @@ def _cli_main() -> None:
     search_p.add_argument(
         "-m", "--mode", default="hybrid", choices=["hybrid", "semantic", "bm25"], help="Search mode (default: hybrid)."
     )
+    search_p.set_defaults(handler=run_search)
 
     related_p = sub.add_parser("find-related", help="Find code similar to a specific location.")
     related_p.add_argument("file_path", help="File path as shown in search results.")
     related_p.add_argument("line", type=int, help="Line number (1-indexed).")
     related_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
     related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
+    related_p.set_defaults(handler=run_find_related)
 
     duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code clusters.")
     duplicates_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
@@ -99,63 +103,121 @@ def _cli_main() -> None:
         help=f"Minimum structural similarity score (default: {DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE:.2f}).",
     )
     duplicates_p.add_argument("--min-cluster-size", type=int, default=2, help="Minimum chunks per cluster (default: 2).")
+    duplicates_p.set_defaults(handler=run_find_duplicates)
 
     init_p = sub.add_parser("init", help="Write .claude/agents/semble-search.md for Claude Code sub-agent support.")
     init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
+    init_p.set_defaults(handler=run_init)
 
+    return parser
+
+
+def _cli_main() -> None:
+    parser = build_cli_parser()
     args = parser.parse_args()
-
-    if args.command == "init":
-        _run_init(force=args.force)
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
         return
+    handler(args)
 
-    index_kwargs = {}
-    if args.command == "find-duplicates":
-        index_kwargs = {
-            "include_paths": args.include_paths,
-            "exclude_paths": args.exclude_paths,
-            "include_tests": args.include_tests,
-        }
-    index = (
-        SembleIndex.from_git(args.path, **index_kwargs)
-        if _is_git_url(args.path)
-        else SembleIndex.from_path(args.path, **index_kwargs)
+
+def run_init(args: argparse.Namespace) -> None:
+    """Run the init CLI command."""
+    _run_init(force=args.force)
+
+
+def run_search(args: argparse.Namespace) -> None:
+    """Run the search CLI command."""
+    index = _load_index(args)
+    results = index.search(args.query, top_k=args.top_k, mode=args.mode)
+    if not results:
+        print("No results found.")
+    else:
+        print(_format_results(f"Search results for: {args.query!r} (mode={args.mode})", results))
+
+
+def run_find_related(args: argparse.Namespace) -> None:
+    """Run the find-related CLI command."""
+    index = _load_index(args)
+    chunk = _resolve_chunk(index.chunks, args.file_path, args.line)
+    if chunk is None:
+        print(f"No chunk found at {args.file_path}:{args.line}.", file=sys.stderr)
+        sys.exit(1)
+    results = index.find_related(chunk, top_k=args.top_k)
+    if not results:
+        print(f"No related chunks found for {args.file_path}:{args.line}.")
+    else:
+        print(_format_results(f"Chunks related to {args.file_path}:{args.line}", results))
+
+
+def run_find_duplicates(args: argparse.Namespace) -> None:
+    """Run the find-duplicates CLI command."""
+    options = _duplicate_options_from_args(args)
+    index = _load_index(
+        args,
+        include_paths=_list_or_none(options.include_paths),
+        exclude_paths=_list_or_none(options.exclude_paths),
+        include_tests=options.include_tests,
+    )
+    clusters = index.find_duplicates(
+        top_k=options.top_k,
+        candidate_k=options.candidate_k,
+        filter_languages=_list_or_none(options.filter_languages),
+        include_paths=_list_or_none(options.include_paths),
+        exclude_paths=_list_or_none(options.exclude_paths),
+        include_tests=options.include_tests,
+        include_data=options.include_data,
+        include_scaffolding=options.include_scaffolding,
+        min_lines=options.min_lines,
+        min_score=options.min_score,
+        min_structural_score=options.min_structural_score,
+        min_cluster_size=options.min_cluster_size,
+    )
+    if not clusters:
+        print("No duplicate clusters found.")
+    else:
+        print(_format_duplicate_clusters("Duplicate clusters", clusters))
+
+
+def _load_index(
+    args: argparse.Namespace,
+    *,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+    include_tests: bool = True,
+) -> SembleIndex:
+    if _is_git_url(args.path):
+        return SembleIndex.from_git(
+            args.path,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+        )
+    return SembleIndex.from_path(
+        args.path,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        include_tests=include_tests,
     )
 
-    if args.command == "search":
-        results = index.search(args.query, top_k=args.top_k, mode=args.mode)
-        if not results:
-            print("No results found.")
-        else:
-            print(_format_results(f"Search results for: {args.query!r} (mode={args.mode})", results))
 
-    elif args.command == "find-related":
-        chunk = _resolve_chunk(index.chunks, args.file_path, args.line)
-        if chunk is None:
-            print(f"No chunk found at {args.file_path}:{args.line}.", file=sys.stderr)
-            sys.exit(1)
-        results = index.find_related(chunk, top_k=args.top_k)
-        if not results:
-            print(f"No related chunks found for {args.file_path}:{args.line}.")
-        else:
-            print(_format_results(f"Chunks related to {args.file_path}:{args.line}", results))
+def _duplicate_options_from_args(args: argparse.Namespace) -> DuplicateSearchOptions:
+    return DuplicateSearchOptions(
+        top_k=args.top_k,
+        candidate_k=args.candidate_k,
+        filter_languages=[args.language] if args.language else None,
+        include_paths=args.include_paths,
+        exclude_paths=args.exclude_paths,
+        include_tests=args.include_tests,
+        include_data=args.include_data,
+        include_scaffolding=args.include_scaffolding,
+        min_lines=args.min_lines,
+        min_score=args.min_score,
+        min_structural_score=args.min_structural_score,
+        min_cluster_size=args.min_cluster_size,
+    )
 
-    elif args.command == "find-duplicates":
-        clusters = index.find_duplicates(
-            top_k=args.top_k,
-            candidate_k=args.candidate_k,
-            filter_languages=[args.language] if args.language else None,
-            include_paths=args.include_paths,
-            exclude_paths=args.exclude_paths,
-            include_tests=args.include_tests,
-            include_data=args.include_data,
-            include_scaffolding=args.include_scaffolding,
-            min_lines=args.min_lines,
-            min_score=args.min_score,
-            min_structural_score=args.min_structural_score,
-            min_cluster_size=args.min_cluster_size,
-        )
-        if not clusters:
-            print("No duplicate clusters found.")
-        else:
-            print(_format_duplicate_clusters("Duplicate clusters", clusters))
+
+def _list_or_none(values: tuple[str, ...] | None) -> list[str] | None:
+    return list(values) if values is not None else None
