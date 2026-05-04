@@ -1,11 +1,13 @@
 import argparse
 import asyncio
 import sys
+from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
 
+from semble.duplicates import duplicate_options_from_values
 from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateSearchOptions, SembleIndex
-from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
 _CLI_COMMANDS = ("search", "find-related", "find-duplicates", "init")
@@ -156,35 +158,18 @@ def run_find_duplicates(args: argparse.Namespace) -> None:
     options = _duplicate_options_from_args(args)
     index = _load_index(
         args,
-        include_paths=_list_or_none(options.include_paths),
-        exclude_paths=_list_or_none(options.exclude_paths),
+        include_paths=options.include_paths,
+        exclude_paths=options.exclude_paths,
         include_tests=options.include_tests,
     )
-    clusters = index.find_duplicates(
-        top_k=options.top_k,
-        candidate_k=options.candidate_k,
-        filter_languages=_list_or_none(options.filter_languages),
-        include_paths=_list_or_none(options.include_paths),
-        exclude_paths=_list_or_none(options.exclude_paths),
-        include_tests=options.include_tests,
-        include_data=options.include_data,
-        include_scaffolding=options.include_scaffolding,
-        min_lines=options.min_lines,
-        min_score=options.min_score,
-        min_structural_score=options.min_structural_score,
-        min_cluster_size=options.min_cluster_size,
-    )
-    if not clusters:
-        print("No duplicate clusters found.")
-    else:
-        print(_format_duplicate_clusters("Duplicate clusters", clusters))
+    print(_format_duplicate_search_result(index.find_duplicates(options=options)))
 
 
 def _load_index(
     args: argparse.Namespace,
     *,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
+    include_paths: Sequence[str] | None = None,
+    exclude_paths: Sequence[str] | None = None,
     include_tests: bool = True,
 ) -> SembleIndex:
     if _is_git_url(args.path):
@@ -203,10 +188,10 @@ def _load_index(
 
 
 def _duplicate_options_from_args(args: argparse.Namespace) -> DuplicateSearchOptions:
-    return DuplicateSearchOptions(
+    return duplicate_options_from_values(
         top_k=args.top_k,
         candidate_k=args.candidate_k,
-        filter_languages=[args.language] if args.language else None,
+        language=args.language,
         include_paths=args.include_paths,
         exclude_paths=args.exclude_paths,
         include_tests=args.include_tests,
@@ -217,7 +202,3 @@ def _duplicate_options_from_args(args: argparse.Namespace) -> DuplicateSearchOpt
         min_structural_score=args.min_structural_score,
         min_cluster_size=args.min_cluster_size,
     )
-
-
-def _list_or_none(values: tuple[str, ...] | None) -> list[str] | None:
-    return list(values) if values is not None else None

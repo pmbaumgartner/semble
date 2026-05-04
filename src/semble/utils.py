@@ -70,6 +70,13 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
     return "\n".join(lines)
 
 
+def _format_duplicate_search_result(clusters: list[DuplicateCluster]) -> str:
+    """Render duplicate search output or its empty state."""
+    if not clusters:
+        return "No duplicate clusters found."
+    return _format_duplicate_clusters("Duplicate clusters", clusters)
+
+
 def _duplicate_signal_parts(result: DuplicateResult) -> list[str]:
     """Return compact duplicate signal labels."""
     signals = result.signals

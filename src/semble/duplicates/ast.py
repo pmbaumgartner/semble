@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -245,9 +244,6 @@ def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[
 
 
 def _ast_features(content: str, language: str | None) -> AstDuplicateFeatures | None:
-    facade_func = _facade_override("_ast_features", _ast_features)
-    if facade_func is not None:
-        return facade_func(content, language)
     return _build_ast_features(content, language)
 
 
@@ -394,9 +390,6 @@ def _parser_language_for_chunk(language: str | None) -> str | None:
 
 
 def _parser_for_language(language: str) -> Any | None:
-    facade_func = _facade_override("_parser_for_language", _parser_for_language)
-    if facade_func is not None:
-        return facade_func(language)
     return _load_parser_for_language(language)
 
 
@@ -412,11 +405,3 @@ def _load_parser_for_language(language: str) -> Any | None:
         return get_parser(language)  # type: ignore[arg-type]
     except Exception:
         return None
-
-
-def _facade_override(name: str, original: Any) -> Any | None:
-    facade = sys.modules.get("semble._duplicates")
-    candidate = getattr(facade, name, None)
-    if candidate is not None and candidate is not original:
-        return candidate
-    return None

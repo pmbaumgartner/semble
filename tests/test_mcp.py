@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from semble import DuplicateSearchOptions
 from semble.mcp import _IndexCache, create_server, serve
 from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder, SearchMode, SearchResult
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
@@ -306,18 +307,20 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
     mock_get.assert_awaited_once_with("/some/path", ref=None)
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
-        top_k=7,
-        candidate_k=19,
-        filter_languages=["python"],
-        include_paths=["src", "lib"],
-        exclude_paths=["src/generated", "tests"],
-        include_tests=True,
-        include_data=True,
-        include_scaffolding=True,
-        min_lines=4,
-        min_score=0.25,
-        min_structural_score=0.42,
-        min_cluster_size=3,
+        options=DuplicateSearchOptions(
+            top_k=7,
+            candidate_k=19,
+            filter_languages=["python"],
+            include_paths=["src", "lib"],
+            exclude_paths=["src/generated", "tests"],
+            include_tests=True,
+            include_data=True,
+            include_scaffolding=True,
+            min_lines=4,
+            min_score=0.25,
+            min_structural_score=0.42,
+            min_cluster_size=3,
+        ),
     )
 
 

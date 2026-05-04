@@ -53,6 +53,12 @@ from semble.duplicates.scoring import (
     score_duplicate_features,
     score_duplicate_pair,
 )
+from semble.duplicates.search import (
+    DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+    DuplicateSearchOptions,
+    duplicate_options_from_values,
+    find_duplicate_pairs,
+)
 from semble.duplicates.tokens import (
     _COMMENT_PREFIXES,
     _KEYWORDS,
@@ -69,7 +75,9 @@ from semble.duplicates.tokens import (
 __all__ = [
     "AstDuplicateFeatures",
     "AstStats",
+    "DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE",
     "DuplicateFeatures",
+    "DuplicateSearchOptions",
     "_AST_NODE_SPLIT_RE",
     "_AST_SHAPE_SIGNAL_WEIGHT",
     "_AST_TYPE_SIGNAL_WEIGHT",
@@ -123,7 +131,9 @@ __all__ = [
     "cluster_duplicate_pairs",
     "duplicate_features",
     "duplicate_features_are_eligible",
+    "duplicate_options_from_values",
     "duplicate_score",
+    "find_duplicate_pairs",
     "score_duplicate_features",
     "score_duplicate_pair",
 ]

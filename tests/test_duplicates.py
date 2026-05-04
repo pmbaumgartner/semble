@@ -1,6 +1,7 @@
 import pytest
 
 import semble._duplicates as duplicates
+import semble.duplicates.ast as duplicate_ast
 from semble import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateCluster, DuplicateResult, DuplicateSignals
 from semble._duplicates import (
     _jaccard,
@@ -367,7 +368,7 @@ public @interface DisabledOnJre {
 
 def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing parser support leaves AST signals unavailable and keeps token scoring."""
-    monkeypatch.setattr(duplicates, "_parser_for_language", lambda language: None)
+    monkeypatch.setattr(duplicate_ast, "_parser_for_language", lambda language: None)
     left = make_chunk("def add(a, b):\n    return a + b", "left.py")
     right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
 

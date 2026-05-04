@@ -7,10 +7,11 @@ from typing import Annotated, Literal
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateSearchOptions, SembleIndex
+from semble.duplicates import duplicate_options_from_values
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
-from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
 
 _REPO_DESCRIPTION = (
     "Git URL (e.g. https://github.com/org/repo) or local path to index and search. "
@@ -119,10 +120,10 @@ async def _find_duplicate_code(
         return error
     assert index is not None
 
-    options = DuplicateSearchOptions(
+    options = duplicate_options_from_values(
         top_k=top_k,
         candidate_k=candidate_k,
-        filter_languages=[language] if language else None,
+        language=language,
         include_paths=include_paths,
         exclude_paths=exclude_paths,
         include_tests=include_tests,
@@ -135,26 +136,9 @@ async def _find_duplicate_code(
     )
     clusters = await asyncio.to_thread(
         index.find_duplicates,
-        top_k=options.top_k,
-        candidate_k=options.candidate_k,
-        filter_languages=_list_or_none(options.filter_languages),
-        include_paths=_list_or_none(options.include_paths),
-        exclude_paths=_list_or_none(options.exclude_paths),
-        include_tests=options.include_tests,
-        include_data=options.include_data,
-        include_scaffolding=options.include_scaffolding,
-        min_lines=options.min_lines,
-        min_score=options.min_score,
-        min_structural_score=options.min_structural_score,
-        min_cluster_size=options.min_cluster_size,
+        options=options,
     )
-    if not clusters:
-        return "No duplicate clusters found."
-    return _format_duplicate_clusters("Duplicate clusters", clusters)
-
-
-def _list_or_none(values: tuple[str, ...] | None) -> list[str] | None:
-    return list(values) if values is not None else None
+    return _format_duplicate_search_result(clusters)
 
 
 def create_server(

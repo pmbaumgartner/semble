@@ -16,12 +16,12 @@ def normalize_scope_path(path: str) -> str:
     return normalized.rstrip("/")
 
 
-def path_in_scope(file_path: str, scopes: list[str]) -> bool:
+def path_in_scope(file_path: str, scopes: Sequence[str]) -> bool:
     """Return whether a repo-relative path is inside any exact or directory scope."""
     return _path_in_normalized_scopes(normalize_scope_path(file_path), _normalize_scopes(scopes) or ())
 
 
-def path_may_contain_scope(dir_path: str, scopes: list[str]) -> bool:
+def path_may_contain_scope(dir_path: str, scopes: Sequence[str]) -> bool:
     """Return whether a repo-relative directory might contain an included scope."""
     return _dir_may_contain_normalized_scope(normalize_scope_path(dir_path), _normalize_scopes(scopes) or ())
 
@@ -57,8 +57,8 @@ def _is_pascal_test_file(filename: str) -> bool:
 def path_is_included(
     file_path: str,
     *,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
+    include_paths: Sequence[str] | None = None,
+    exclude_paths: Sequence[str] | None = None,
     include_tests: bool = True,
 ) -> bool:
     """Return whether a repo-relative path passes include/exclude/test filters."""

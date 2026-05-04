@@ -1,4 +1,5 @@
 import contextlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,8 +21,8 @@ class IndexBuildOptions:
     extensions: frozenset[str] | None = None
     ignore: frozenset[str] | None = None
     include_text_files: bool = False
-    include_paths: list[str] | None = None
-    exclude_paths: list[str] | None = None
+    include_paths: Sequence[str] | None = None
+    exclude_paths: Sequence[str] | None = None
     include_tests: bool = True
 
 
@@ -41,8 +42,8 @@ def create_index_from_path(
     ignore: frozenset[str] | None = None,
     include_text_files: bool = False,
     display_root: Path | None = None,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
+    include_paths: Sequence[str] | None = None,
+    exclude_paths: Sequence[str] | None = None,
     include_tests: bool = True,
 ) -> tuple[bm25s.BM25, SelectableBasicBackend, list[Chunk]]:
     """Create an index from a resolved directory, optionally storing chunk paths relative to display_root.

@@ -1,5 +1,5 @@
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -146,8 +146,8 @@ def walk_files(
     root: Path,
     extensions: frozenset[str],
     ignore: frozenset[str] | None = None,
-    include_paths: list[str] | None = None,
-    exclude_paths: list[str] | None = None,
+    include_paths: Sequence[str] | None = None,
+    exclude_paths: Sequence[str] | None = None,
     include_tests: bool = True,
 ) -> Iterator[Path]:
     """Yield files under root matching extensions, skipping ignored paths.

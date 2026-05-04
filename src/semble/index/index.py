@@ -4,84 +4,24 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 from bm25s import BM25
 
-from semble._duplicates import (
-    DuplicateFeatures,
-    _pair_key,
-    _same_file_ranges_overlap,
-    cluster_duplicate_pairs,
-    duplicate_features,
-    duplicate_features_are_eligible,
-    duplicate_score,
-    score_duplicate_features,
+from semble.duplicates.clustering import cluster_duplicate_pairs
+from semble.duplicates.search import (
+    DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+    DuplicateSearchOptions,
+    duplicate_options_from_values,
+    find_duplicate_pairs,
 )
 from semble.index.create import IndexBuildOptions, build_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
-from semble.path_filters import PathFilter, normalize_scope_path, path_in_scope
+from semble.path_filters import PathFilter
 from semble.search import search_bm25, search_hybrid, search_semantic
-from semble.types import Chunk, DuplicateCluster, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
-
-DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class DuplicateSearchOptions:
-    """Normalized options for duplicate-code discovery."""
-
-    top_k: int
-    candidate_k: int
-    min_lines: int
-    min_score: float
-    min_structural_score: float
-    min_cluster_size: int
-    filter_languages: tuple[str, ...] | None
-    include_paths: tuple[str, ...] | None
-    exclude_paths: tuple[str, ...] | None
-    include_tests: bool
-    include_data: bool
-    include_scaffolding: bool
-
-    def __init__(
-        self,
-        *,
-        top_k: int = 5,
-        candidate_k: int = 12,
-        min_lines: int = 8,
-        min_score: float = 0.0,
-        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-        min_cluster_size: int = 2,
-        filter_languages: Sequence[str] | None = None,
-        include_paths: Sequence[str] | None = None,
-        exclude_paths: Sequence[str] | None = None,
-        include_tests: bool = False,
-        include_data: bool = False,
-        include_scaffolding: bool = False,
-    ) -> None:
-        """Create normalized duplicate discovery options."""
-        object.__setattr__(self, "top_k", top_k)
-        object.__setattr__(self, "candidate_k", candidate_k)
-        object.__setattr__(self, "min_lines", min_lines)
-        object.__setattr__(self, "min_score", min_score)
-        object.__setattr__(self, "min_structural_score", min_structural_score)
-        object.__setattr__(self, "min_cluster_size", min_cluster_size)
-        object.__setattr__(self, "filter_languages", _tuple_or_none(filter_languages))
-        object.__setattr__(self, "include_paths", _tuple_or_none(include_paths))
-        object.__setattr__(self, "exclude_paths", _tuple_or_none(exclude_paths))
-        object.__setattr__(self, "include_tests", include_tests)
-        object.__setattr__(self, "include_data", include_data)
-        object.__setattr__(self, "include_scaffolding", include_scaffolding)
-
-
-def _tuple_or_none(values: Sequence[str] | None) -> tuple[str, ...] | None:
-    if not values:
-        return None
-    return tuple(values)
+from semble.types import Chunk, DuplicateCluster, Encoder, IndexStats, SearchMode, SearchResult
 
 
 class SembleIndex:
@@ -141,8 +81,8 @@ class SembleIndex:
         extensions: frozenset[str] | None = None,
         ignore: frozenset[str] | None = None,
         include_text_files: bool = False,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
         include_tests: bool = True,
     ) -> SembleIndex:
         """Create and index a SembleIndex from a directory.
@@ -186,8 +126,8 @@ class SembleIndex:
         extensions: frozenset[str] | None = None,
         ignore: frozenset[str] | None = None,
         include_text_files: bool = False,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
         include_tests: bool = True,
     ) -> SembleIndex:
         """Clone a git repository and index it.
@@ -290,7 +230,7 @@ class SembleIndex:
         :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
         :return: Ranked list of duplicate clusters, best match first.
         """
-        search_options = options or DuplicateSearchOptions(
+        search_options = options or duplicate_options_from_values(
             top_k=top_k,
             candidate_k=candidate_k,
             min_lines=min_lines,
@@ -307,226 +247,13 @@ class SembleIndex:
         if search_options.top_k <= 0:
             return []
 
-        pairs = self._find_duplicate_pairs(options=search_options)
+        pairs = find_duplicate_pairs(
+            self.chunks,
+            self._semantic_index,
+            self._language_mapping,
+            search_options,
+        )
         return cluster_duplicate_pairs(pairs, min_cluster_size=search_options.min_cluster_size)[: search_options.top_k]
-
-    def _find_duplicate_pairs(
-        self,
-        *,
-        options: DuplicateSearchOptions | None = None,
-        candidate_k: int = 12,
-        min_lines: int = 8,
-        min_score: float = 0.0,
-        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-        filter_languages: list[str] | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        include_tests: bool = False,
-        include_data: bool = False,
-        include_scaffolding: bool = False,
-    ) -> list[DuplicateResult]:
-        """Return all sorted duplicate candidate pairs without top-k slicing."""
-        search_options = options or DuplicateSearchOptions(
-            candidate_k=candidate_k,
-            min_lines=min_lines,
-            min_score=min_score,
-            min_structural_score=min_structural_score,
-            filter_languages=filter_languages,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            include_tests=include_tests,
-            include_data=include_data,
-            include_scaffolding=include_scaffolding,
-        )
-        if not self.chunks:
-            return []
-
-        features_by_index, eligible = self._eligible_duplicate_features(search_options)
-        if not eligible:
-            return []
-
-        candidate_k = max(search_options.candidate_k, 1)
-        pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult] = {}
-
-        vectors = np.asarray(self._semantic_index.vectors)
-        for group in self._duplicate_language_groups(eligible).values():
-            self._collect_duplicate_pairs_for_group(
-                group=group,
-                vectors=vectors,
-                features_by_index=features_by_index,
-                candidate_k=candidate_k,
-                min_score=search_options.min_score,
-                min_structural_score=search_options.min_structural_score,
-                pairs=pairs,
-            )
-
-        return sorted(pairs.values(), key=self._duplicate_sort_key)
-
-    def _eligible_duplicate_features(
-        self,
-        options: DuplicateSearchOptions,
-    ) -> tuple[dict[int, DuplicateFeatures], list[int]]:
-        """Return duplicate features and indices for chunks that pass cheap eligibility gates."""
-        features_by_index: dict[int, DuplicateFeatures] = {}
-        eligible = []
-        path_filter = PathFilter(options.include_paths, options.exclude_paths, include_tests=options.include_tests)
-        for index in self._duplicate_candidate_indices(options.filter_languages, path_filter=path_filter):
-            if self._line_count(self.chunks[index]) < options.min_lines:
-                continue
-            features = duplicate_features(self.chunks[index])
-            if not duplicate_features_are_eligible(
-                features,
-                include_data=options.include_data,
-                include_scaffolding=options.include_scaffolding,
-            ):
-                continue
-            features_by_index[index] = features
-            eligible.append(index)
-        return features_by_index, eligible
-
-    def _collect_duplicate_pairs_for_group(
-        self,
-        *,
-        group: list[int],
-        vectors: npt.NDArray[np.float32],
-        features_by_index: dict[int, DuplicateFeatures],
-        candidate_k: int,
-        min_score: float,
-        min_structural_score: float,
-        pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
-    ) -> None:
-        """Collect duplicate pairs from one same-language candidate group."""
-        if len(group) < 2:
-            return
-
-        selector = np.array(group, dtype=np.int_)
-        related = self._semantic_index.query(
-            vectors[selector],
-            k=min(candidate_k + 1, len(selector)),
-            selector=selector,
-        )
-
-        for left_index, (indices, distances) in zip(group, related):
-            for right_index_raw, distance in zip(indices, distances):
-                self._maybe_add_duplicate_pair(
-                    left_index=left_index,
-                    right_index=int(right_index_raw),
-                    semantic_score=1.0 - float(distance),
-                    features_by_index=features_by_index,
-                    min_score=min_score,
-                    min_structural_score=min_structural_score,
-                    pairs=pairs,
-                )
-
-    def _maybe_add_duplicate_pair(
-        self,
-        *,
-        left_index: int,
-        right_index: int,
-        semantic_score: float,
-        features_by_index: dict[int, DuplicateFeatures],
-        min_score: float,
-        min_structural_score: float,
-        pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
-    ) -> None:
-        """Score and record one duplicate pair if it passes pair-level gates."""
-        if right_index == left_index:
-            return
-
-        left = self.chunks[left_index]
-        right = self.chunks[right_index]
-        if _same_file_ranges_overlap(left, right):
-            return
-
-        signals = score_duplicate_features(
-            features_by_index[left_index],
-            features_by_index[right_index],
-            semantic_score=semantic_score,
-        )
-        if signals.structural_score < min_structural_score:
-            return
-        score = duplicate_score(signals)
-        if score <= 0.0 or score < min_score:
-            return
-
-        result_left, result_right = self._ordered_duplicate_pair(left, right)
-        duplicate = DuplicateResult(left=result_left, right=result_right, score=score, signals=signals)
-        pair_key = _pair_key(left, right)
-        existing = pairs.get(pair_key)
-        if existing is None or self._duplicate_rank_key(duplicate) > self._duplicate_rank_key(existing):
-            pairs[pair_key] = duplicate
-
-    def _duplicate_language_groups(self, eligible: list[int]) -> dict[str | None, list[int]]:
-        """Group eligible duplicate candidates by exact language."""
-        groups: dict[str | None, list[int]] = defaultdict(list)
-        for index in eligible:
-            groups[self.chunks[index].language].append(index)
-        return dict(groups)
-
-    def _duplicate_candidate_indices(
-        self,
-        filter_languages: Sequence[str] | None,
-        include_paths: Sequence[str] | None = None,
-        exclude_paths: Sequence[str] | None = None,
-        include_tests: bool = False,
-        path_filter: PathFilter | None = None,
-    ) -> list[int]:
-        """Return chunk indices eligible for duplicate discovery."""
-        eligible = set(range(len(self.chunks)))
-
-        if filter_languages:
-            language_indices: set[int] = set()
-            for language in filter_languages:
-                language_indices.update(self._language_mapping.get(language, []))
-            eligible &= language_indices
-
-        path_filter = path_filter or PathFilter(include_paths, exclude_paths, include_tests=include_tests)
-        path_indices = {
-            index
-            for index, chunk in enumerate(self.chunks)
-            if path_filter.includes(chunk.file_path)
-        }
-        eligible &= path_indices
-
-        return sorted(eligible)
-
-    @staticmethod
-    def _path_in_scope(file_path: str, scopes: list[str]) -> bool:
-        """Return whether a repo-relative path is inside any exact or directory scope."""
-        return path_in_scope(file_path, scopes)
-
-    @staticmethod
-    def _normalize_scope_path(path: str) -> str:
-        """Normalize duplicate path scopes without touching the filesystem."""
-        return normalize_scope_path(path)
-
-    @staticmethod
-    def _line_count(chunk: Chunk) -> int:
-        """Return the number of content lines in a chunk."""
-        return len(chunk.content.splitlines())
-
-    @staticmethod
-    def _ordered_duplicate_pair(left: Chunk, right: Chunk) -> tuple[Chunk, Chunk]:
-        """Return pair chunks in stable location order."""
-        left_key = (left.file_path, left.start_line, left.end_line)
-        right_key = (right.file_path, right.start_line, right.end_line)
-        return (left, right) if left_key <= right_key else (right, left)
-
-    @staticmethod
-    def _duplicate_rank_key(result: DuplicateResult) -> tuple[float, float, float]:
-        """Return the descending score key used to keep the best version of a pair."""
-        return (result.score, result.signals.semantic_score, result.signals.structural_score)
-
-    @staticmethod
-    def _duplicate_sort_key(result: DuplicateResult) -> tuple[float, float, float, str, str]:
-        """Return the final deterministic duplicate result sort key."""
-        return (
-            -result.score,
-            -result.signals.semantic_score,
-            -result.signals.structural_score,
-            result.left.location,
-            result.right.location,
-        )
 
     def _get_selector_vector(
         self, filter_languages: list[str] | None = None, filter_paths: list[str] | None = None

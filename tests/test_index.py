@@ -7,9 +7,10 @@ import numpy.typing as npt
 import pytest
 from vicinity.backends.basic import BasicArgs
 
-import semble.index.index as index_module
+import semble.duplicates.search as duplicate_search
 from semble import SembleIndex
 from semble._duplicates import duplicate_features
+from semble.duplicates.search import DuplicateSearchOptions, find_duplicate_pairs
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend
 from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder
@@ -245,24 +246,29 @@ def total(items):
         ]
     )
 
-    all_pairs = index._find_duplicate_pairs(
-        candidate_k=12,
-        min_lines=1,
-        min_score=0.0,
-        min_structural_score=0.0,
-        filter_languages=None,
-        include_paths=None,
-        exclude_paths=None,
-        include_tests=False,
-        include_data=False,
-        include_scaffolding=False,
+    all_pairs = find_duplicate_pairs(
+        index.chunks,
+        index._semantic_index,
+        index._language_mapping,
+        DuplicateSearchOptions(
+            candidate_k=12,
+            min_lines=1,
+            min_score=0.0,
+            min_structural_score=0.0,
+            filter_languages=None,
+            include_paths=None,
+            exclude_paths=None,
+            include_tests=False,
+            include_data=False,
+            include_scaffolding=False,
+        ),
     )
 
     assert len(all_pairs) == 3
     clusters = index.find_duplicates(top_k=1, min_lines=1, min_structural_score=0.0)
     assert len(clusters) == 1
     assert clusters[0].pairs == tuple(all_pairs)
-    assert all_pairs == sorted(all_pairs, key=index._duplicate_sort_key)
+    assert all_pairs == sorted(all_pairs, key=duplicate_search._duplicate_sort_key)
 
 
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
@@ -311,7 +317,7 @@ def test_find_duplicates_precomputes_features_once_per_eligible_chunk(monkeypatc
         ]
     )
     mock_features = MagicMock(wraps=duplicate_features)
-    monkeypatch.setattr(index_module, "duplicate_features", mock_features)
+    monkeypatch.setattr(duplicate_search, "duplicate_features", mock_features)
 
     index.find_duplicates(min_lines=1)
 
@@ -512,7 +518,7 @@ def add(a, b):
         ]
     )
     monkeypatch.setattr(
-        index_module,
+        duplicate_search,
         "score_duplicate_features",
         lambda *args, **kwargs: DuplicateSignals(
             semantic_score=0.9,
