@@ -175,7 +175,7 @@ class SembleIndex:
         min_lines: int = 8,
         min_score: float = 0.0,
         filter_languages: list[str] | None = None,
-        filter_paths: list[str] | None = None,
+        include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
     ) -> list[DuplicateResult]:
         """Return ranked duplicate-code candidate pairs from indexed chunks.
@@ -185,7 +185,7 @@ class SembleIndex:
         :param min_lines: Minimum content line count required for each side.
         :param min_score: Minimum final duplicate score to return.
         :param filter_languages: Optional exact language filters.
-        :param filter_paths: Optional repo-relative file or directory scopes to include.
+        :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
         :return: Ranked list of duplicate candidate pairs, best match first.
         """
@@ -194,7 +194,7 @@ class SembleIndex:
 
         eligible = [
             index
-            for index in self._duplicate_candidate_indices(filter_languages, filter_paths, exclude_paths)
+            for index in self._duplicate_candidate_indices(filter_languages, include_paths, exclude_paths)
             if self._line_count(self.chunks[index]) >= min_lines
         ]
         if not eligible:
@@ -238,7 +238,7 @@ class SembleIndex:
     def _duplicate_candidate_indices(
         self,
         filter_languages: list[str] | None,
-        filter_paths: list[str] | None,
+        include_paths: list[str] | None,
         exclude_paths: list[str] | None,
     ) -> list[int]:
         """Return chunk indices eligible for duplicate discovery."""
@@ -250,11 +250,11 @@ class SembleIndex:
                 language_indices.update(self._language_mapping.get(language, []))
             eligible &= language_indices
 
-        if filter_paths:
+        if include_paths:
             path_indices = {
                 index
                 for index, chunk in enumerate(self.chunks)
-                if self._path_in_scope(chunk.file_path, filter_paths)
+                if self._path_in_scope(chunk.file_path, include_paths)
             }
             eligible &= path_indices
 

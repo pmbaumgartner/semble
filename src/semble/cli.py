@@ -109,7 +109,7 @@ def _cli_main() -> None:
         results = index.find_duplicates(
             top_k=args.top_k,
             filter_languages=[args.language] if args.language else None,
-            filter_paths=args.include_paths,
+            include_paths=args.include_paths,
             exclude_paths=args.exclude_paths,
             min_lines=args.min_lines,
             min_score=args.min_score,

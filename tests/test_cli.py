@@ -140,7 +140,7 @@ def test_cli_find_duplicates_maps_options(
     fake_index.find_duplicates.assert_called_once_with(
         top_k=7,
         filter_languages=["python"],
-        filter_paths=["src", "lib"],
+        include_paths=["src", "lib"],
         exclude_paths=["tests", "src/generated"],
         min_lines=4,
         min_score=0.25,
@@ -165,7 +165,7 @@ def test_cli_find_duplicates_empty_state(
     fake_index.find_duplicates.assert_called_once_with(
         top_k=5,
         filter_languages=None,
-        filter_paths=None,
+        include_paths=None,
         exclude_paths=None,
         min_lines=8,
         min_score=0.0,

@@ -240,14 +240,14 @@ def total(items):
     results = index.find_duplicates(
         top_k=10,
         min_lines=1,
-        filter_paths=["./src/"],
+        include_paths=["./src/"],
         exclude_paths=["src/generated/"],
     )
     result_paths = {results[0].left.file_path, results[0].right.file_path}
 
     assert len(results) == 1
     assert result_paths == {"src/a.py", "src/nested/b.py"}
-    assert index.find_duplicates(min_lines=1, filter_paths=["src/a.py"]) == []
+    assert index.find_duplicates(min_lines=1, include_paths=["src/a.py"]) == []
 
 
 def test_find_duplicates_intersects_language_and_path_filters() -> None:
@@ -270,7 +270,7 @@ def total(items):
         index.find_duplicates(
             min_lines=1,
             filter_languages=["python"],
-            filter_paths=["web"],
+            include_paths=["web"],
         )
         == []
     )
