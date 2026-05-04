@@ -49,7 +49,7 @@ results = index.search("save model to disk", top_k=3)
 # Find code similar to a specific result
 related = index.find_related(results[0], top_k=3)
 
-# Find duplicate-code candidates
+# Find grouped duplicate implementations
 duplicates = index.find_duplicates(top_k=3)
 
 # Each result exposes the matched chunk
@@ -122,7 +122,7 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 |------|-------------|
 | `search` | Search a codebase with a natural-language or code query. Pass `repo` as a git URL or local path. |
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
-| `find_duplicates` | Find duplicate implementations and refactoring candidates in a codebase. |
+| `find_duplicates` | Find grouped duplicate implementations and refactoring candidates in a codebase. |
 
 ### Sub-agent support
 
@@ -157,20 +157,21 @@ Use `semble find-related` to discover code similar to a known location (pass `fi
 semble find-related src/auth.py 42 ./my-project
 ​```
 
-Use `semble find-duplicates` to identify duplicate implementations, copy-pasted logic, and refactoring candidates:
+Use `semble find-duplicates` to identify grouped duplicate implementations, copy-pasted logic, and refactoring candidates:
 
 ​```bash
 semble find-duplicates ./my-project
 semble find-duplicates ./my-project --language python
 semble find-duplicates ./my-project --candidate-k 24
 semble find-duplicates ./my-project --min-structural-score 0.35
+semble find-duplicates ./my-project --min-cluster-size 3
 semble find-duplicates ./my-project --include-tests
 semble find-duplicates ./my-project --include-data
 semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery requires structural similarity of at least `0.40` by default and excludes tests, static data/config chunks, and scaffolding-only chunks by default; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include them.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. Use `--min-cluster-size 3` to focus on larger repeated patterns; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include those files.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -179,7 +180,7 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 1. Start with `semble search` to find relevant chunks.
 2. Inspect full files only when the returned chunk is not enough context.
 3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use `semble find-duplicates` when looking for duplicate implementations, copy-pasted logic, or refactoring candidates.
+4. Use `semble find-duplicates` when looking for grouped duplicate implementations, copy-pasted logic, or refactoring candidates.
 5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
 ```
 
@@ -200,10 +201,10 @@ semble search "save model to disk" https://github.com/MinishLab/model2vec
 # Find code similar to a known location (file_path and line from a prior search result)
 semble find-related src/auth.py 42 ./my-project
 
-# Find duplicate-code candidates in a local repo
+# Find duplicate clusters in a local repo
 semble find-duplicates ./my-project
 
-# Find duplicate-code candidates in a remote repo
+# Find duplicate clusters in a remote repo
 semble find-duplicates https://github.com/MinishLab/model2vec
 
 # Limit duplicate discovery to one language
@@ -214,6 +215,9 @@ semble find-duplicates ./my-project --candidate-k 24
 
 # Loosen the structural-similarity floor
 semble find-duplicates ./my-project --min-structural-score 0.35
+
+# Focus on larger duplicate clusters
+semble find-duplicates ./my-project --min-cluster-size 3
 
 # Include tests in duplicate discovery
 semble find-duplicates ./my-project --include-tests
@@ -228,7 +232,7 @@ semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery requires structural similarity of at least `0.40` by default and excludes tests, static data/config chunks, and scaffolding-only chunks by default.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
