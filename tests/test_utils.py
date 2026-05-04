@@ -1,5 +1,5 @@
 from semble.types import DuplicateCluster, DuplicateResult, DuplicateSignals
-from semble.utils import _format_duplicate_clusters, _format_duplicate_results
+from semble.utils import _format_duplicate_clusters
 from tests.conftest import make_chunk
 
 
@@ -26,40 +26,6 @@ def _duplicate_cluster(*, extra_pair: bool = False) -> DuplicateCluster:
         pairs = (result, extra)
         members = (result.left, result.right, third)
     return DuplicateCluster(members=members, pairs=pairs, score=result.score)
-
-
-def test_format_duplicate_results_empty() -> None:
-    """Empty duplicate results render only the header."""
-    assert _format_duplicate_results("Duplicate candidates", []) == "Duplicate candidates\n"
-
-
-def test_format_duplicate_results_token_only_omits_ast_fields() -> None:
-    """Token-only duplicate signals do not render unavailable AST fields."""
-    out = _format_duplicate_results("Duplicate candidates", [_duplicate_result()])
-
-    assert "semantic=0.900 structural=0.800 tokens=0.700" in out
-    assert "ast_type" not in out
-    assert "ast_shape" not in out
-
-
-def test_format_duplicate_results_ast_signals() -> None:
-    """AST-backed duplicate signals render AST score fields."""
-    out = _format_duplicate_results("Duplicate candidates", [_duplicate_result(ast_signals=True)])
-
-    assert "ast_type=0.600" in out
-    assert "ast_shape=0.500" in out
-
-
-def test_format_duplicate_results_locations_and_code_blocks() -> None:
-    """Duplicate formatting includes both locations and both fenced snippets."""
-    out = _format_duplicate_results("Duplicate candidates", [_duplicate_result()])
-
-    assert "src/left.py:1-2 <-> src/right.py:1-2" in out
-    assert "def left():" in out
-    assert "def right():" in out
-    assert out.count("```") == 4
-    assert "Left:" in out
-    assert "Right:" in out
 
 
 def test_format_duplicate_clusters_empty() -> None:

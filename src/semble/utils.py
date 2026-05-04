@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from semble.types import Chunk, DuplicateCluster, DuplicateResult, SearchResult
+from semble.types import Chunk, DuplicateCluster, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
@@ -36,37 +36,6 @@ def _format_results(header: str, results: list[SearchResult]) -> str:
         lines.append(f"## {i}. {r.chunk.location}  [score={r.score:.3f}]")
         lines.append("```")
         lines.append(r.chunk.content.strip())
-        lines.append("```")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _format_duplicate_results(header: str, results: list[DuplicateResult]) -> str:
-    """Render DuplicateResult objects as numbered paired code blocks."""
-    lines: list[str] = [header, ""]
-    for i, result in enumerate(results, 1):
-        signals = result.signals
-        signal_parts = [
-            f"semantic={signals.semantic_score:.3f}",
-            f"structural={signals.structural_score:.3f}",
-            f"tokens={signals.token_jaccard:.3f}",
-        ]
-        if signals.ast_type_jaccard is not None:
-            signal_parts.append(f"ast_type={signals.ast_type_jaccard:.3f}")
-        if signals.ast_shape_jaccard is not None:
-            signal_parts.append(f"ast_shape={signals.ast_shape_jaccard:.3f}")
-
-        lines.append(f"## {i}. {result.left.location} <-> {result.right.location}  [score={result.score:.3f}]")
-        lines.append(" ".join(signal_parts))
-        lines.append("")
-        lines.append("Left:")
-        lines.append("```")
-        lines.append(result.left.content.strip())
-        lines.append("```")
-        lines.append("")
-        lines.append("Right:")
-        lines.append("```")
-        lines.append(result.right.content.strip())
         lines.append("```")
         lines.append("")
     return "\n".join(lines)
