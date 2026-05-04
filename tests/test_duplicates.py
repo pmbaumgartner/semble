@@ -9,7 +9,10 @@ from semble.duplicates import (
     _parser_language_for_chunk,
     _same_file_ranges_overlap,
     _weighted_structural_score,
+    duplicate_features,
+    duplicate_features_are_eligible,
     duplicate_score,
+    score_duplicate_features,
     score_duplicate_pair,
 )
 from semble.types import Chunk
@@ -152,6 +155,39 @@ def invoice_amount(products):
             ast_shape_jaccard=signals.ast_shape_jaccard,
         )
     )
+
+
+def test_score_duplicate_features_reuses_precomputed_features() -> None:
+    """Precomputed duplicate features produce the same signals as chunk-level scoring."""
+    left = make_chunk("def add(a, b):\n    return a + b", "left.py")
+    right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
+
+    from_chunks = score_duplicate_pair(left, right, semantic_score=0.9)
+    from_features = score_duplicate_features(
+        duplicate_features(left),
+        duplicate_features(right),
+        semantic_score=0.9,
+    )
+
+    assert from_features == from_chunks
+
+
+def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_available() -> None:
+    """Comment/string-only chunks are ineligible when parser-backed AST counting is available."""
+    if duplicates._parser_for_language("python") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    docstring = duplicate_features(make_chunk('"""Only documentation."""', "docs.py"))
+    comment = duplicate_features(make_chunk("# Only a comment", "comment.py"))
+    real_code = duplicate_features(make_chunk("def real():\n    return 1", "real.py"))
+
+    assert docstring.code_bearing_node_count is not None
+    assert docstring.code_bearing_node_count < 4
+    assert not duplicate_features_are_eligible(docstring)
+    assert comment.code_bearing_node_count is not None
+    assert comment.code_bearing_node_count < 4
+    assert not duplicate_features_are_eligible(comment)
+    assert duplicate_features_are_eligible(real_code)
 
 
 def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:

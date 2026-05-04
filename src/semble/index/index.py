@@ -9,9 +9,18 @@ import numpy as np
 import numpy.typing as npt
 from bm25s import BM25
 
-from semble.duplicates import _pair_key, _same_file_ranges_overlap, duplicate_score, score_duplicate_pair
+from semble.duplicates import (
+    DuplicateFeatures,
+    _pair_key,
+    _same_file_ranges_overlap,
+    duplicate_features,
+    duplicate_features_are_eligible,
+    duplicate_score,
+    score_duplicate_features,
+)
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
+from semble.path_filters import normalize_scope_path, path_in_scope, path_is_included
 from semble.search import search_bm25, search_hybrid, search_semantic
 from semble.types import Chunk, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
 
@@ -73,6 +82,9 @@ class SembleIndex:
         extensions: frozenset[str] | None = None,
         ignore: frozenset[str] | None = None,
         include_text_files: bool = False,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        include_tests: bool = True,
     ) -> SembleIndex:
         """Create and index a SembleIndex from a directory.
 
@@ -81,6 +93,9 @@ class SembleIndex:
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
         :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
+        :param include_paths: Optional repo-relative file or directory scopes to include.
+        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+        :param include_tests: Whether test-looking paths should be indexed.
         :return: An indexed SembleIndex. Chunk file paths are relative to ``path``.
         :raises FileNotFoundError: If `path` does not exist.
         :raises NotADirectoryError: If `path` exists but is not a directory.
@@ -99,6 +114,9 @@ class SembleIndex:
             ignore=ignore,
             include_text_files=include_text_files,
             display_root=path,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
         )
 
         index = SembleIndex(model, bm25, vicinity, chunks)
@@ -114,6 +132,9 @@ class SembleIndex:
         extensions: frozenset[str] | None = None,
         ignore: frozenset[str] | None = None,
         include_text_files: bool = False,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+        include_tests: bool = True,
     ) -> SembleIndex:
         """Clone a git repository and index it.
 
@@ -128,6 +149,9 @@ class SembleIndex:
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
         :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
+        :param include_paths: Optional repo-relative file or directory scopes to include.
+        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+        :param include_tests: Whether test-looking paths should be indexed.
         :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
         :raises RuntimeError: If git is not on PATH or the clone fails.
         """
@@ -149,6 +173,9 @@ class SembleIndex:
                 ignore=ignore,
                 include_text_files=include_text_files,
                 display_root=resolved_path,
+                include_paths=include_paths,
+                exclude_paths=exclude_paths,
+                include_tests=include_tests,
             )
 
             index = SembleIndex(model, bm25, vicinity, chunks)
@@ -177,6 +204,7 @@ class SembleIndex:
         filter_languages: list[str] | None = None,
         include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
+        include_tests: bool = False,
     ) -> list[DuplicateResult]:
         """Return ranked duplicate-code candidate pairs from indexed chunks.
 
@@ -187,59 +215,140 @@ class SembleIndex:
         :param filter_languages: Optional exact language filters.
         :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+        :param include_tests: Whether test-looking paths are eligible duplicate candidates.
         :return: Ranked list of duplicate candidate pairs, best match first.
         """
         if not self.chunks or top_k <= 0:
             return []
 
-        eligible = [
-            index
-            for index in self._duplicate_candidate_indices(filter_languages, include_paths, exclude_paths)
-            if self._line_count(self.chunks[index]) >= min_lines
-        ]
+        features_by_index, eligible = self._eligible_duplicate_features(
+            filter_languages=filter_languages,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            min_lines=min_lines,
+        )
         if not eligible:
             return []
 
         candidate_k = max(candidate_k, 1)
         pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult] = {}
-        for left_index in eligible:
-            left = self.chunks[left_index]
-            selector = self._duplicate_neighbor_selector(left, eligible)
-            if selector.size == 0:
-                continue
 
-            related = search_semantic(
-                left.content,
-                self.model,
-                self._semantic_index,
-                self.chunks,
-                min(candidate_k, len(selector)),
-                selector,
+        vectors = np.asarray(self._semantic_index.vectors)
+        for group in self._duplicate_language_groups(eligible).values():
+            self._collect_duplicate_pairs_for_group(
+                group=group,
+                vectors=vectors,
+                features_by_index=features_by_index,
+                candidate_k=candidate_k,
+                min_score=min_score,
+                pairs=pairs,
             )
-            for result in related:
-                right = result.chunk
-                if right == left or _same_file_ranges_overlap(left, right):
-                    continue
-
-                signals = score_duplicate_pair(left, right, semantic_score=result.score)
-                score = duplicate_score(signals)
-                if score <= 0.0 or score < min_score:
-                    continue
-
-                result_left, result_right = self._ordered_duplicate_pair(left, right)
-                duplicate = DuplicateResult(left=result_left, right=result_right, score=score, signals=signals)
-                pair_key = _pair_key(left, right)
-                existing = pairs.get(pair_key)
-                if existing is None or self._duplicate_rank_key(duplicate) > self._duplicate_rank_key(existing):
-                    pairs[pair_key] = duplicate
 
         return sorted(pairs.values(), key=self._duplicate_sort_key)[:top_k]
+
+    def _eligible_duplicate_features(
+        self,
+        *,
+        filter_languages: list[str] | None,
+        include_paths: list[str] | None,
+        exclude_paths: list[str] | None,
+        include_tests: bool,
+        min_lines: int,
+    ) -> tuple[dict[int, DuplicateFeatures], list[int]]:
+        """Return duplicate features and indices for chunks that pass cheap eligibility gates."""
+        features_by_index: dict[int, DuplicateFeatures] = {}
+        eligible = []
+        for index in self._duplicate_candidate_indices(filter_languages, include_paths, exclude_paths, include_tests):
+            if self._line_count(self.chunks[index]) < min_lines:
+                continue
+            features = duplicate_features(self.chunks[index])
+            if not duplicate_features_are_eligible(features):
+                continue
+            features_by_index[index] = features
+            eligible.append(index)
+        return features_by_index, eligible
+
+    def _collect_duplicate_pairs_for_group(
+        self,
+        *,
+        group: list[int],
+        vectors: npt.NDArray[np.float32],
+        features_by_index: dict[int, DuplicateFeatures],
+        candidate_k: int,
+        min_score: float,
+        pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
+    ) -> None:
+        """Collect duplicate pairs from one same-language candidate group."""
+        if len(group) < 2:
+            return
+
+        selector = np.array(group, dtype=np.int_)
+        related = self._semantic_index.query(
+            vectors[selector],
+            k=min(candidate_k + 1, len(selector)),
+            selector=selector,
+        )
+
+        for left_index, (indices, distances) in zip(group, related):
+            for right_index_raw, distance in zip(indices, distances):
+                self._maybe_add_duplicate_pair(
+                    left_index=left_index,
+                    right_index=int(right_index_raw),
+                    semantic_score=1.0 - float(distance),
+                    features_by_index=features_by_index,
+                    min_score=min_score,
+                    pairs=pairs,
+                )
+
+    def _maybe_add_duplicate_pair(
+        self,
+        *,
+        left_index: int,
+        right_index: int,
+        semantic_score: float,
+        features_by_index: dict[int, DuplicateFeatures],
+        min_score: float,
+        pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
+    ) -> None:
+        """Score and record one duplicate pair if it passes pair-level gates."""
+        if right_index == left_index:
+            return
+
+        left = self.chunks[left_index]
+        right = self.chunks[right_index]
+        if _same_file_ranges_overlap(left, right):
+            return
+
+        signals = score_duplicate_features(
+            features_by_index[left_index],
+            features_by_index[right_index],
+            semantic_score=semantic_score,
+        )
+        score = duplicate_score(signals)
+        if score <= 0.0 or score < min_score:
+            return
+
+        result_left, result_right = self._ordered_duplicate_pair(left, right)
+        duplicate = DuplicateResult(left=result_left, right=result_right, score=score, signals=signals)
+        pair_key = _pair_key(left, right)
+        existing = pairs.get(pair_key)
+        if existing is None or self._duplicate_rank_key(duplicate) > self._duplicate_rank_key(existing):
+            pairs[pair_key] = duplicate
+
+    def _duplicate_language_groups(self, eligible: list[int]) -> dict[str | None, list[int]]:
+        """Group eligible duplicate candidates by exact language."""
+        groups: dict[str | None, list[int]] = defaultdict(list)
+        for index in eligible:
+            groups[self.chunks[index].language].append(index)
+        return dict(groups)
 
     def _duplicate_candidate_indices(
         self,
         filter_languages: list[str] | None,
         include_paths: list[str] | None,
         exclude_paths: list[str] | None,
+        include_tests: bool,
     ) -> list[int]:
         """Return chunk indices eligible for duplicate discovery."""
         eligible = set(range(len(self.chunks)))
@@ -250,59 +359,29 @@ class SembleIndex:
                 language_indices.update(self._language_mapping.get(language, []))
             eligible &= language_indices
 
-        if include_paths:
-            path_indices = {
-                index
-                for index, chunk in enumerate(self.chunks)
-                if self._path_in_scope(chunk.file_path, include_paths)
-            }
-            eligible &= path_indices
-
-        if exclude_paths:
-            excluded = {
-                index
-                for index, chunk in enumerate(self.chunks)
-                if self._path_in_scope(chunk.file_path, exclude_paths)
-            }
-            eligible -= excluded
+        path_indices = {
+            index
+            for index, chunk in enumerate(self.chunks)
+            if path_is_included(
+                chunk.file_path,
+                include_paths=include_paths,
+                exclude_paths=exclude_paths,
+                include_tests=include_tests,
+            )
+        }
+        eligible &= path_indices
 
         return sorted(eligible)
-
-    def _duplicate_neighbor_selector(
-        self,
-        left: Chunk,
-        eligible: list[int],
-    ) -> npt.NDArray[np.int_]:
-        """Create a selector of eligible duplicate neighbors for a left chunk."""
-        indices = []
-        for index in eligible:
-            chunk = self.chunks[index]
-            if chunk == left:
-                continue
-            if chunk.language != left.language:
-                continue
-            indices.append(index)
-        return np.array(indices, dtype=np.int_)
 
     @staticmethod
     def _path_in_scope(file_path: str, scopes: list[str]) -> bool:
         """Return whether a repo-relative path is inside any exact or directory scope."""
-        normalized_path = SembleIndex._normalize_scope_path(file_path)
-        for scope in scopes:
-            normalized_scope = SembleIndex._normalize_scope_path(scope)
-            if normalized_scope in {"", "."}:
-                return True
-            if normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/"):
-                return True
-        return False
+        return path_in_scope(file_path, scopes)
 
     @staticmethod
     def _normalize_scope_path(path: str) -> str:
         """Normalize duplicate path scopes without touching the filesystem."""
-        normalized = path.replace("\\", "/").strip("/")
-        while normalized.startswith("./"):
-            normalized = normalized[2:]
-        return normalized.rstrip("/")
+        return normalize_scope_path(path)
 
     @staticmethod
     def _line_count(chunk: Chunk) -> int:

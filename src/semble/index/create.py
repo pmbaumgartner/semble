@@ -19,6 +19,9 @@ def create_index_from_path(
     ignore: frozenset[str] | None = None,
     include_text_files: bool = False,
     display_root: Path | None = None,
+    include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+    include_tests: bool = True,
 ) -> tuple[bm25s.BM25, SelectableBasicBackend, list[Chunk]]:
     """Create an index from a resolved directory, optionally storing chunk paths relative to display_root.
 
@@ -28,6 +31,9 @@ def create_index_from_path(
     :param ignore: Directory names to skip.
     :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
     :param display_root: If set, chunk file paths are stored relative to this root.
+    :param include_paths: Optional repo-relative file or directory scopes to include.
+    :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+    :param include_tests: Whether test-looking paths should be indexed.
     :raises ValueError: if no items were found, no index can be created.
     :return: A bm25 index, vicinity index and list of chunks
     """
@@ -35,7 +41,14 @@ def create_index_from_path(
 
     chunks: list[Chunk] = []
 
-    for file_path in walk_files(path, extensions, ignore):
+    for file_path in walk_files(
+        path,
+        extensions,
+        ignore,
+        include_paths=include_paths,
+        exclude_paths=exclude_paths,
+        include_tests=include_tests,
+    ):
         language = language_for_path(file_path)
         with contextlib.suppress(OSError):
             source = file_path.read_text(encoding="utf-8", errors="replace")

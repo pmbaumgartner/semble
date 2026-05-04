@@ -83,6 +83,7 @@ async def _find_duplicate_code(
     top_k: int,
     candidate_k: int,
     language: str | None,
+    include_tests: bool,
     min_lines: int,
     min_score: float,
 ) -> str:
@@ -97,6 +98,7 @@ async def _find_duplicate_code(
         top_k=top_k,
         candidate_k=candidate_k,
         filter_languages=[language] if language else None,
+        include_tests=include_tests,
         min_lines=min_lines,
         min_score=min_score,
     )
@@ -162,6 +164,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             Field(description="Semantic neighbors to inspect per chunk before duplicate scoring.", ge=1),
         ] = 12,
         language: Annotated[str | None, Field(description="Only compare chunks in this language.")] = None,
+        include_tests: Annotated[bool, Field(description="Include test files in duplicate discovery.")] = False,
         min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
         min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,
     ) -> str:
@@ -176,6 +179,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             top_k,
             candidate_k,
             language,
+            include_tests,
             min_lines,
             min_score,
         )

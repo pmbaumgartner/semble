@@ -63,3 +63,27 @@ def test_walk_files_prunes_ignored_dirs(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr("semble.index.file_walker.os.walk", tracking_walk)
     list(walk_files(tmp_path, frozenset({".py", ".js"})))
     assert not any("node_modules" in v for v in visited[1:]), visited
+
+
+def test_walk_files_prunes_dirs_outside_include_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Include path scopes prune unrelated directories before file filtering."""
+    _touch(tmp_path / "src" / "keep.py")
+    _touch(tmp_path / "src" / "skip.py")
+    _touch(tmp_path / "docs" / "deep" / "skip.py")
+
+    visited: list[str] = []
+    real_walk = os.walk
+
+    def tracking_walk(top: str) -> Iterator[tuple[str, list[str], list[str]]]:
+        for dirpath, dirnames, filenames in real_walk(top):
+            visited.append(dirpath)
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr("semble.index.file_walker.os.walk", tracking_walk)
+    found = {
+        p.relative_to(tmp_path).as_posix()
+        for p in walk_files(tmp_path, frozenset({".py"}), include_paths=["src/keep.py"])
+    }
+
+    assert found == {"src/keep.py"}
+    assert not any("docs" in v for v in visited[1:]), visited

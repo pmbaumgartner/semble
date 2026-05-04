@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -158,23 +159,63 @@ _KEYWORDS = frozenset(
         "yield",
     }
 )
+_MIN_CODE_BEARING_NODES = 4
 
 
-def score_duplicate_pair(left: Chunk, right: Chunk, *, semantic_score: float) -> DuplicateSignals:
-    """Compute structural duplicate signals for two indexed chunks."""
-    token_jaccard = _jaccard(_token_ngrams(left.content), _token_ngrams(right.content))
+@dataclass(frozen=True, slots=True)
+class DuplicateFeatures:
+    """Precomputed structural duplicate features for one chunk."""
+
+    token_ngrams: set[str]
+    ast_type_ngrams: set[str] | None = None
+    ast_shape_edges: set[str] | None = None
+    code_bearing_node_count: int | None = None
+
+
+def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
+    """Precompute duplicate-scoring features for a chunk."""
+    ast = _ast_features(chunk.content, chunk.language)
+    if ast is None:
+        return DuplicateFeatures(token_ngrams=_token_ngrams(chunk.content))
+
+    ast_type_ngrams, ast_shape_edges, code_bearing_node_count = ast
+    if code_bearing_node_count < _MIN_CODE_BEARING_NODES:
+        ast_type_ngrams = None
+        ast_shape_edges = None
+    return DuplicateFeatures(
+        token_ngrams=_token_ngrams(chunk.content),
+        ast_type_ngrams=ast_type_ngrams,
+        ast_shape_edges=ast_shape_edges,
+        code_bearing_node_count=code_bearing_node_count,
+    )
+
+
+def duplicate_features_are_eligible(
+    features: DuplicateFeatures,
+    *,
+    min_code_bearing_nodes: int = _MIN_CODE_BEARING_NODES,
+) -> bool:
+    """Return whether a chunk has enough parser-visible code to scan for duplicates."""
+    return features.code_bearing_node_count is None or features.code_bearing_node_count >= min_code_bearing_nodes
+
+
+def score_duplicate_features(
+    left: DuplicateFeatures,
+    right: DuplicateFeatures,
+    *,
+    semantic_score: float,
+) -> DuplicateSignals:
+    """Compute structural duplicate signals from precomputed chunk features."""
+    token_jaccard = _jaccard(left.token_ngrams, right.token_ngrams)
     ast_type_jaccard = None
     ast_shape_jaccard = None
 
-    left_ast = _ast_fingerprint(left.content, left.language)
-    right_ast = _ast_fingerprint(right.content, right.language)
-    if left_ast is not None and right_ast is not None:
-        left_types, left_shape = left_ast
-        right_types, right_shape = right_ast
-        if left_types or right_types:
-            ast_type_jaccard = _jaccard(left_types, right_types)
-        if left_shape or right_shape:
-            ast_shape_jaccard = _jaccard(left_shape, right_shape)
+    if left.ast_type_ngrams is not None and right.ast_type_ngrams is not None:
+        if left.ast_type_ngrams or right.ast_type_ngrams:
+            ast_type_jaccard = _jaccard(left.ast_type_ngrams, right.ast_type_ngrams)
+    if left.ast_shape_edges is not None and right.ast_shape_edges is not None:
+        if left.ast_shape_edges or right.ast_shape_edges:
+            ast_shape_jaccard = _jaccard(left.ast_shape_edges, right.ast_shape_edges)
 
     return DuplicateSignals(
         semantic_score=semantic_score,
@@ -186,6 +227,15 @@ def score_duplicate_pair(left: Chunk, right: Chunk, *, semantic_score: float) ->
         token_jaccard=token_jaccard,
         ast_type_jaccard=ast_type_jaccard,
         ast_shape_jaccard=ast_shape_jaccard,
+    )
+
+
+def score_duplicate_pair(left: Chunk, right: Chunk, *, semantic_score: float) -> DuplicateSignals:
+    """Compute structural duplicate signals for two indexed chunks."""
+    return score_duplicate_features(
+        duplicate_features(left),
+        duplicate_features(right),
+        semantic_score=semantic_score,
     )
 
 
@@ -258,9 +308,14 @@ def _weighted_structural_score(
 
 
 def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[str]] | None:
-    if not _code_content(content).strip():
+    features = _ast_features(content, language)
+    if features is None:
         return None
+    type_ngrams, shape_edges, _ = features
+    return type_ngrams, shape_edges
 
+
+def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str], int] | None:
     parser_language = _parser_language_for_chunk(language)
     if parser_language is None:
         return None
@@ -276,11 +331,9 @@ def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[
 
     labels: list[str] = []
     shape_edges: set[str] = set()
-    _collect_ast_sequences(tree.root_node, labels, shape_edges)
+    code_bearing_node_count = _collect_ast_sequences(tree.root_node, labels, shape_edges)
     type_ngrams = _ngrams(labels, size=_NGRAM_SIZE)
-    if not type_ngrams and not shape_edges:
-        return None
-    return type_ngrams, shape_edges
+    return type_ngrams, shape_edges, code_bearing_node_count
 
 
 def _collect_ast_sequences(
@@ -288,16 +341,28 @@ def _collect_ast_sequences(
     labels: list[str],
     shape_edges: set[str],
     parent_label: str | None = None,
-) -> None:
+) -> int:
+    if _is_ignored_ast_subtree(node.type):
+        return 0
+
+    code_bearing_node_count = 0
+    child_parent = parent_label
+    if node.is_named and node.type != "ERROR":
+        label = _normalize_ast_label(node.type)
+        labels.append(label)
+        code_bearing_node_count += 1
+        if parent_label is not None:
+            shape_edges.add(f"{parent_label}>{label}")
+        child_parent = label
+
     for child in node.children:
-        child_parent = parent_label
-        if child.is_named and child.type != "ERROR":
-            label = _normalize_ast_label(child.type)
-            labels.append(label)
-            if parent_label is not None:
-                shape_edges.add(f"{parent_label}>{label}")
-            child_parent = label
-        _collect_ast_sequences(child, labels, shape_edges, child_parent)
+        code_bearing_node_count += _collect_ast_sequences(child, labels, shape_edges, child_parent)
+    return code_bearing_node_count
+
+
+def _is_ignored_ast_subtree(node_type: str) -> bool:
+    lower = node_type.lower()
+    return lower == "comment" or lower.endswith("_comment") or _normalize_ast_label(lower) == "STRING"
 
 
 def _normalize_ast_label(node_type: str) -> str:

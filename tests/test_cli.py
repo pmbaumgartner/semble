@@ -130,21 +130,29 @@ def test_cli_find_duplicates_maps_options(
             "tests",
             "--exclude",
             "src/generated",
+            "--include-tests",
             "--min-lines",
             "4",
             "--min-score",
             "0.25",
         ],
     )
-    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
         _cli_main()
 
+    mock_from_path.assert_called_once_with(
+        "/some/path",
+        include_paths=["src", "lib"],
+        exclude_paths=["tests", "src/generated"],
+        include_tests=True,
+    )
     fake_index.find_duplicates.assert_called_once_with(
         top_k=7,
         candidate_k=19,
         filter_languages=["python"],
         include_paths=["src", "lib"],
         exclude_paths=["tests", "src/generated"],
+        include_tests=True,
         min_lines=4,
         min_score=0.25,
     )
@@ -162,15 +170,22 @@ def test_cli_find_duplicates_empty_state(
     fake_index = MagicMock()
     fake_index.find_duplicates.return_value = []
     monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "/some/path"])
-    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
         _cli_main()
 
+    mock_from_path.assert_called_once_with(
+        "/some/path",
+        include_paths=None,
+        exclude_paths=None,
+        include_tests=False,
+    )
     fake_index.find_duplicates.assert_called_once_with(
         top_k=5,
         candidate_k=12,
         filter_languages=None,
         include_paths=None,
         exclude_paths=None,
+        include_tests=False,
         min_lines=8,
         min_score=0.0,
     )
@@ -188,7 +203,12 @@ def test_cli_find_duplicates_uses_git_url(
     with patch("semble.cli.SembleIndex.from_git", return_value=fake_index) as mock_from_git:
         _cli_main()
 
-    mock_from_git.assert_called_once_with("https://github.com/org/repo")
+    mock_from_git.assert_called_once_with(
+        "https://github.com/org/repo",
+        include_paths=None,
+        exclude_paths=None,
+        include_tests=False,
+    )
     assert "No duplicate candidates found." in capsys.readouterr().out
 
 

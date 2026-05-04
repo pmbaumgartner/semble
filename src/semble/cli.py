@@ -79,6 +79,7 @@ def _cli_main() -> None:
     duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
     duplicates_p.add_argument("--include", action="append", dest="include_paths", help="File or directory scope to include.")
     duplicates_p.add_argument("--exclude", action="append", dest="exclude_paths", help="File or directory scope to exclude.")
+    duplicates_p.add_argument("--include-tests", action="store_true", help="Include test files in duplicate discovery.")
     duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
     duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
 
@@ -91,7 +92,18 @@ def _cli_main() -> None:
         _run_init(force=args.force)
         return
 
-    index = SembleIndex.from_git(args.path) if _is_git_url(args.path) else SembleIndex.from_path(args.path)
+    index_kwargs = {}
+    if args.command == "find-duplicates":
+        index_kwargs = {
+            "include_paths": args.include_paths,
+            "exclude_paths": args.exclude_paths,
+            "include_tests": args.include_tests,
+        }
+    index = (
+        SembleIndex.from_git(args.path, **index_kwargs)
+        if _is_git_url(args.path)
+        else SembleIndex.from_path(args.path, **index_kwargs)
+    )
 
     if args.command == "search":
         results = index.search(args.query, top_k=args.top_k, mode=args.mode)
@@ -118,6 +130,7 @@ def _cli_main() -> None:
             filter_languages=[args.language] if args.language else None,
             include_paths=args.include_paths,
             exclude_paths=args.exclude_paths,
+            include_tests=args.include_tests,
             min_lines=args.min_lines,
             min_score=args.min_score,
         )
