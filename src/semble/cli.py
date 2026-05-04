@@ -137,7 +137,7 @@ def _cli_main() -> None:
             print(_format_results(f"Chunks related to {args.file_path}:{args.line}", results))
 
     elif args.command == "find-duplicates":
-        results = index.find_duplicates(
+        clusters = index.find_duplicates(
             top_k=args.top_k,
             candidate_k=args.candidate_k,
             filter_languages=[args.language] if args.language else None,
@@ -151,7 +151,7 @@ def _cli_main() -> None:
             min_structural_score=args.min_structural_score,
             min_cluster_size=args.min_cluster_size,
         )
-        if not results:
+        if not clusters:
             print("No duplicate clusters found.")
         else:
-            print(_format_duplicate_clusters("Duplicate clusters", results))
+            print(_format_duplicate_clusters("Duplicate clusters", clusters))

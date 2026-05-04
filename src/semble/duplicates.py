@@ -310,8 +310,8 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         return DuplicateFeatures(token_ngrams=_token_ngrams(chunk.content))
 
     (
-        ast_type_ngrams,
-        ast_shape_edges,
+        parsed_ast_type_ngrams,
+        parsed_ast_shape_edges,
         code_bearing_node_count,
         behavioral_node_count,
         data_shape_node_count,
@@ -319,6 +319,8 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         scaffolding_node_count,
         substantive_node_count,
     ) = ast
+    ast_type_ngrams: set[str] | None = parsed_ast_type_ngrams
+    ast_shape_edges: set[str] | None = parsed_ast_shape_edges
     if code_bearing_node_count < _MIN_CODE_BEARING_NODES:
         ast_type_ngrams = None
         ast_shape_edges = None
@@ -731,7 +733,8 @@ def _parser_for_language(language: str) -> Any | None:
         return None
 
     try:
-        return get_parser(language)
+        # Runtime allowlisting and exception handling cover unsupported parser names.
+        return get_parser(language)  # type: ignore[arg-type]
     except Exception:
         return None
 
