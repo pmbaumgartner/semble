@@ -485,8 +485,8 @@ def test_find_duplicates_excludes_docstring_only_chunks_when_parser_is_available
     assert index.find_duplicates(min_lines=1) == []
 
 
-def test_find_duplicates_does_not_exclude_numeric_container_chunks_yet() -> None:
-    """Data-heavy chunks are not specially filtered by the conservative AST gate."""
+def test_find_duplicates_excludes_static_data_chunks_by_default() -> None:
+    """Static data/config chunks are skipped unless include_data=True."""
     if duplicate_features(_chunk("[1, 2, 3]", "src/data.py")).code_bearing_node_count is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
@@ -496,6 +496,48 @@ VALUES = [
     (4, 5, 6),
     (7, 8, 9),
 ]
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py"),
+            _chunk(content, "src/b.py"),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+    assert len(index.find_duplicates(min_lines=1, include_data=True)) == 1
+
+
+def test_find_duplicates_excludes_scalar_config_assignments_by_default() -> None:
+    """Scalar assignment-only config chunks are skipped unless include_data=True."""
+    if duplicate_features(_chunk("VALUE = 1", "src/config.py")).code_bearing_node_count is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    content = """\
+DATE_FORMAT = "j F Y"
+TIME_FORMAT = "h:i A"
+MONTH_DAY_FORMAT = "j F"
+SHORT_DATE_FORMAT = "j M Y"
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py"),
+            _chunk(content, "src/b.py"),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+    assert len(index.find_duplicates(min_lines=1, include_data=True)) == 1
+
+
+def test_find_duplicates_keeps_declaration_only_chunks_without_static_bindings() -> None:
+    """Declaration-only chunks are not treated as static data without binding/data-shape nodes."""
+    if duplicate_features(_chunk("class User:\n    pass", "src/user.py")).code_bearing_node_count is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    content = """\
+class UserRecord:
+    pass
 """
     index = _duplicate_index(
         [

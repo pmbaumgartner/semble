@@ -190,6 +190,71 @@ def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_availabl
     assert duplicate_features_are_eligible(real_code)
 
 
+def test_duplicate_features_detect_static_data_chunks_when_parser_is_available() -> None:
+    """Literal/container data chunks are ineligible by default and opt-in eligible."""
+    if duplicates._parser_for_language("python") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    data = duplicate_features(
+        make_chunk(
+            """\
+VALUES = [
+    (1, 2, 3),
+    (4, 5, 6),
+    (7, 8, 9),
+]
+""",
+            "data.py",
+        )
+    )
+    behavior = duplicate_features(
+        make_chunk(
+            """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+""",
+            "behavior.py",
+        )
+    )
+
+    assert data.code_bearing_node_count is not None
+    assert data.behavioral_node_count == 0
+    assert data.data_shape_node_count
+    assert data.static_binding_node_count
+    assert not duplicate_features_are_eligible(data)
+    assert duplicate_features_are_eligible(data, include_data=True)
+    assert behavior.behavioral_node_count
+    assert duplicate_features_are_eligible(behavior)
+
+
+def test_duplicate_features_detect_scalar_config_assignments_when_parser_is_available() -> None:
+    """Scalar assignment-only config chunks are static data even without containers."""
+    if duplicates._parser_for_language("python") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    config = duplicate_features(
+        make_chunk(
+            """\
+DATE_FORMAT = "j F Y"
+TIME_FORMAT = "h:i A"
+MONTH_DAY_FORMAT = "j F"
+SHORT_DATE_FORMAT = "j M Y"
+""",
+            "formats.py",
+        )
+    )
+
+    assert config.code_bearing_node_count is not None
+    assert config.behavioral_node_count == 0
+    assert config.data_shape_node_count == 0
+    assert config.static_binding_node_count
+    assert not duplicate_features_are_eligible(config)
+    assert duplicate_features_are_eligible(config, include_data=True)
+
+
 def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing parser support leaves AST signals unavailable and keeps token scoring."""
     monkeypatch.setattr(duplicates, "_parser_for_language", lambda language: None)

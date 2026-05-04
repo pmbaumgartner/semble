@@ -80,6 +80,7 @@ def _cli_main() -> None:
     duplicates_p.add_argument("--include", action="append", dest="include_paths", help="File or directory scope to include.")
     duplicates_p.add_argument("--exclude", action="append", dest="exclude_paths", help="File or directory scope to exclude.")
     duplicates_p.add_argument("--include-tests", action="store_true", help="Include test files in duplicate discovery.")
+    duplicates_p.add_argument("--include-data", action="store_true", help="Include static data/config chunks in duplicate discovery.")
     duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
     duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
 
@@ -131,6 +132,7 @@ def _cli_main() -> None:
             include_paths=args.include_paths,
             exclude_paths=args.exclude_paths,
             include_tests=args.include_tests,
+            include_data=args.include_data,
             min_lines=args.min_lines,
             min_score=args.min_score,
         )

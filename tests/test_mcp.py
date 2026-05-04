@@ -285,6 +285,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
                 "candidate_k": 19,
                 "language": "python",
                 "include_tests": True,
+                "include_data": True,
                 "min_lines": 4,
                 "min_score": 0.25,
             },
@@ -298,6 +299,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
         candidate_k=19,
         filter_languages=["python"],
         include_tests=True,
+        include_data=True,
         min_lines=4,
         min_score=0.25,
     )

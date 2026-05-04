@@ -21,6 +21,7 @@ _NGRAM_SIZE = 4
 _TOKEN_SIGNAL_WEIGHT = 0.5
 _AST_TYPE_SIGNAL_WEIGHT = 0.25
 _AST_SHAPE_SIGNAL_WEIGHT = 0.25
+_AST_NODE_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
 _PARSER_LANGUAGE_ALIASES = {
     "c#": "csharp",
@@ -90,6 +91,65 @@ _STRING_NODE_TYPES = frozenset(
 _BOOL_NODE_TYPES = frozenset({"bool", "boolean", "boolean_literal", "false", "false_literal", "true", "true_literal"})
 _NULL_NODE_TYPES = frozenset({"nil", "null", "null_literal", "nullptr"})
 _NONE_NODE_TYPES = frozenset({"none", "none_literal"})
+_BEHAVIOR_NODE_TOKENS = frozenset(
+    {
+        "await",
+        "binary",
+        "call",
+        "catch",
+        "closure",
+        "comprehension",
+        "except",
+        "for",
+        "if",
+        "lambda",
+        "loop",
+        "match",
+        "raise",
+        "return",
+        "switch",
+        "throw",
+        "try",
+        "unary",
+        "update",
+        "while",
+        "yield",
+    }
+)
+_DATA_SHAPE_NODE_TYPES = frozenset(
+    {
+        "array",
+        "array_expression",
+        "composite_literal",
+        "dict",
+        "dictionary",
+        "hash",
+        "hash_literal",
+        "keyed_element",
+        "list",
+        "literal_element",
+        "literal_value",
+        "map_literal",
+        "object",
+        "object_literal",
+        "pair",
+        "set",
+        "struct_expression",
+        "tuple",
+        "tuple_expression",
+    }
+)
+_STATIC_BINDING_NODE_TYPES = frozenset(
+    {
+        "assignment",
+        "assignment_statement",
+        "const_declaration",
+        "lexical_declaration",
+        "short_var_declaration",
+        "variable_declaration",
+        "variable_declarator",
+    }
+)
 
 _KEYWORDS = frozenset(
     {
@@ -170,6 +230,9 @@ class DuplicateFeatures:
     ast_type_ngrams: set[str] | None = None
     ast_shape_edges: set[str] | None = None
     code_bearing_node_count: int | None = None
+    behavioral_node_count: int | None = None
+    data_shape_node_count: int | None = None
+    static_binding_node_count: int | None = None
 
 
 def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
@@ -178,7 +241,14 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
     if ast is None:
         return DuplicateFeatures(token_ngrams=_token_ngrams(chunk.content))
 
-    ast_type_ngrams, ast_shape_edges, code_bearing_node_count = ast
+    (
+        ast_type_ngrams,
+        ast_shape_edges,
+        code_bearing_node_count,
+        behavioral_node_count,
+        data_shape_node_count,
+        static_binding_node_count,
+    ) = ast
     if code_bearing_node_count < _MIN_CODE_BEARING_NODES:
         ast_type_ngrams = None
         ast_shape_edges = None
@@ -187,6 +257,9 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         ast_type_ngrams=ast_type_ngrams,
         ast_shape_edges=ast_shape_edges,
         code_bearing_node_count=code_bearing_node_count,
+        behavioral_node_count=behavioral_node_count,
+        data_shape_node_count=data_shape_node_count,
+        static_binding_node_count=static_binding_node_count,
     )
 
 
@@ -194,9 +267,23 @@ def duplicate_features_are_eligible(
     features: DuplicateFeatures,
     *,
     min_code_bearing_nodes: int = _MIN_CODE_BEARING_NODES,
+    include_data: bool = False,
 ) -> bool:
     """Return whether a chunk has enough parser-visible code to scan for duplicates."""
-    return features.code_bearing_node_count is None or features.code_bearing_node_count >= min_code_bearing_nodes
+    if features.code_bearing_node_count is None:
+        return True
+    if features.code_bearing_node_count < min_code_bearing_nodes:
+        return False
+    if not include_data and _is_static_data_features(features):
+        return False
+    return True
+
+
+def _is_static_data_features(features: DuplicateFeatures) -> bool:
+    """Return whether parser-backed features look like literal/container data."""
+    return features.behavioral_node_count == 0 and bool(
+        features.data_shape_node_count or features.static_binding_node_count
+    )
 
 
 def score_duplicate_features(
@@ -311,11 +398,11 @@ def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[
     features = _ast_features(content, language)
     if features is None:
         return None
-    type_ngrams, shape_edges, _ = features
+    type_ngrams, shape_edges, _, _, _, _ = features
     return type_ngrams, shape_edges
 
 
-def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str], int] | None:
+def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str], int, int, int, int] | None:
     parser_language = _parser_language_for_chunk(language)
     if parser_language is None:
         return None
@@ -331,9 +418,18 @@ def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str
 
     labels: list[str] = []
     shape_edges: set[str] = set()
-    code_bearing_node_count = _collect_ast_sequences(tree.root_node, labels, shape_edges)
+    code_bearing_node_count, behavioral_node_count, data_shape_node_count, static_binding_node_count = (
+        _collect_ast_sequences(tree.root_node, labels, shape_edges)
+    )
     type_ngrams = _ngrams(labels, size=_NGRAM_SIZE)
-    return type_ngrams, shape_edges, code_bearing_node_count
+    return (
+        type_ngrams,
+        shape_edges,
+        code_bearing_node_count,
+        behavioral_node_count,
+        data_shape_node_count,
+        static_binding_node_count,
+    )
 
 
 def _collect_ast_sequences(
@@ -341,28 +437,62 @@ def _collect_ast_sequences(
     labels: list[str],
     shape_edges: set[str],
     parent_label: str | None = None,
-) -> int:
+) -> tuple[int, int, int, int]:
     if _is_ignored_ast_subtree(node.type):
-        return 0
+        return 0, 0, 0, 0
 
     code_bearing_node_count = 0
+    behavioral_node_count = 0
+    data_shape_node_count = 0
+    static_binding_node_count = 0
     child_parent = parent_label
     if node.is_named and node.type != "ERROR":
         label = _normalize_ast_label(node.type)
         labels.append(label)
         code_bearing_node_count += 1
+        if _is_behavior_ast_node(node.type):
+            behavioral_node_count += 1
+        if _is_data_shape_ast_node(node.type):
+            data_shape_node_count += 1
+        if _is_static_binding_ast_node(node.type):
+            static_binding_node_count += 1
         if parent_label is not None:
             shape_edges.add(f"{parent_label}>{label}")
         child_parent = label
 
     for child in node.children:
-        code_bearing_node_count += _collect_ast_sequences(child, labels, shape_edges, child_parent)
-    return code_bearing_node_count
+        child_code, child_behavioral, child_data_shape, child_static_binding = _collect_ast_sequences(
+            child, labels, shape_edges, child_parent
+        )
+        code_bearing_node_count += child_code
+        behavioral_node_count += child_behavioral
+        data_shape_node_count += child_data_shape
+        static_binding_node_count += child_static_binding
+    return code_bearing_node_count, behavioral_node_count, data_shape_node_count, static_binding_node_count
 
 
 def _is_ignored_ast_subtree(node_type: str) -> bool:
     lower = node_type.lower()
     return lower == "comment" or lower.endswith("_comment") or _normalize_ast_label(lower) == "STRING"
+
+
+def _is_behavior_ast_node(node_type: str) -> bool:
+    return any(token in _BEHAVIOR_NODE_TOKENS for token in _ast_node_tokens(node_type))
+
+
+def _is_data_shape_ast_node(node_type: str) -> bool:
+    lower = node_type.lower()
+    return lower in _DATA_SHAPE_NODE_TYPES or (
+        lower.endswith("_literal") and "char" not in lower and "string" not in lower
+    )
+
+
+def _is_static_binding_ast_node(node_type: str) -> bool:
+    return node_type.lower() in _STATIC_BINDING_NODE_TYPES
+
+
+def _ast_node_tokens(node_type: str) -> list[str]:
+    return [token for token in _AST_NODE_SPLIT_RE.split(node_type.lower()) if token]
 
 
 def _normalize_ast_label(node_type: str) -> str:
