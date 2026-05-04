@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from semble.mcp import _IndexCache, create_server, serve
-from semble.types import Chunk, DuplicateResult, DuplicateSignals, Encoder, SearchMode, SearchResult
+from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder, SearchMode, SearchResult
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
 from tests.conftest import make_chunk
 
@@ -21,7 +21,7 @@ async def _call_tool(
     args: dict[str, Any],
     *,
     index_method: str,
-    index_return: list[SearchResult | DuplicateResult],
+    index_return: list[SearchResult | DuplicateCluster],
     index_chunks: list[Chunk] | None = None,
     default_source: str | None = "/some/path",
 ) -> str:
@@ -48,6 +48,12 @@ def _duplicate_result() -> DuplicateResult:
     right = make_chunk("def right():\n    return 1", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
     return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+
+
+def _duplicate_cluster() -> DuplicateCluster:
+    """Return a representative duplicate cluster for MCP tests."""
+    result = _duplicate_result()
+    return DuplicateCluster(members=(result.left, result.right), pairs=(result,), score=result.score)
 
 
 def test_resolve_chunk() -> None:
@@ -238,9 +244,9 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "find_duplicates",
             {"top_k": 2},
             "find_duplicates",
-            [_duplicate_result()],
+            [_duplicate_cluster()],
             None,
-            ["Duplicate candidates", "src/left.py"],
+            ["Duplicate clusters", "src/left.py"],
             id="find_duplicates_with_results",
         ),
         pytest.param(
@@ -249,7 +255,7 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "find_duplicates",
             [],
             None,
-            ["No duplicate candidates found."],
+            ["No duplicate clusters found."],
             id="find_duplicates_no_results",
         ),
     ],
@@ -259,7 +265,7 @@ async def test_tool_output(
     tool: str,
     args: dict[str, Any],
     method: str,
-    results: list[SearchResult | DuplicateResult],
+    results: list[SearchResult | DuplicateCluster],
     chunks: list[Chunk] | None,
     expected_substrings: list[str],
 ) -> None:
@@ -275,7 +281,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
     fake_index = MagicMock()
     with (
         patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get,
-        patch("semble.mcp.asyncio.to_thread", new=AsyncMock(return_value=[_duplicate_result()])) as mock_to_thread,
+        patch("semble.mcp.asyncio.to_thread", new=AsyncMock(return_value=[_duplicate_cluster()])) as mock_to_thread,
     ):
         server = create_server(cache, default_source="/some/path")
         result = await server.call_tool(
@@ -290,10 +296,11 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
                 "min_lines": 4,
                 "min_score": 0.25,
                 "min_structural_score": 0.42,
+                "min_cluster_size": 3,
             },
         )
 
-    assert "Duplicate candidates" in _tool_text(result)
+    assert "Duplicate clusters" in _tool_text(result)
     mock_get.assert_awaited_once_with("/some/path")
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
@@ -306,6 +313,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
         min_lines=4,
         min_score=0.25,
         min_structural_score=0.42,
+        min_cluster_size=3,
     )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from semble.types import Chunk, DuplicateResult, SearchResult
+from semble.types import Chunk, DuplicateCluster, DuplicateResult, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
@@ -67,6 +67,51 @@ def _format_duplicate_results(header: str, results: list[DuplicateResult]) -> st
         lines.append("Right:")
         lines.append("```")
         lines.append(result.right.content.strip())
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) -> str:
+    """Render DuplicateCluster objects as numbered grouped code blocks."""
+    lines: list[str] = [header, ""]
+    for i, cluster in enumerate(clusters, 1):
+        strongest = cluster.pairs[0]
+        signals = strongest.signals
+        signal_parts = [
+            f"semantic={signals.semantic_score:.3f}",
+            f"structural={signals.structural_score:.3f}",
+            f"tokens={signals.token_jaccard:.3f}",
+        ]
+        if signals.ast_type_jaccard is not None:
+            signal_parts.append(f"ast_type={signals.ast_type_jaccard:.3f}")
+        if signals.ast_shape_jaccard is not None:
+            signal_parts.append(f"ast_shape={signals.ast_shape_jaccard:.3f}")
+
+        lines.append(
+            f"## {i}. Duplicate cluster  [score={cluster.score:.3f}, "
+            f"members={len(cluster.members)}, pairs={len(cluster.pairs)}]"
+        )
+        lines.append("Members:")
+        for member in cluster.members:
+            lines.append(f"- {member.location}")
+        lines.append("")
+        lines.append(f"Strongest pair: {strongest.left.location} <-> {strongest.right.location}")
+        lines.append(" ".join(signal_parts))
+        lines.append("")
+        if len(cluster.pairs) > 1:
+            lines.append("Additional pairs:")
+            for pair in cluster.pairs[1:]:
+                lines.append(f"- {pair.left.location} <-> {pair.right.location}  [score={pair.score:.3f}]")
+            lines.append("")
+        lines.append("Left:")
+        lines.append("```")
+        lines.append(strongest.left.content.strip())
+        lines.append("```")
+        lines.append("")
+        lines.append("Right:")
+        lines.append("```")
+        lines.append(strongest.right.content.strip())
         lines.append("```")
         lines.append("")
     return "\n".join(lines)

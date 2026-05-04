@@ -10,7 +10,7 @@ from pydantic import Field
 from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
-from semble.utils import _format_duplicate_results, _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
 
 _REPO_DESCRIPTION = (
     "Git URL (e.g. https://github.com/org/repo) or local path to index and search. "
@@ -89,14 +89,15 @@ async def _find_duplicate_code(
     min_lines: int,
     min_score: float,
     min_structural_score: float,
+    min_cluster_size: int,
 ) -> str:
-    """Find duplicate-code candidates and format MCP text output."""
+    """Find duplicate-code clusters and format MCP text output."""
     index, error = await _get_index_or_error(cache, source)
     if error:
         return error
     assert index is not None
 
-    results = await asyncio.to_thread(
+    clusters = await asyncio.to_thread(
         index.find_duplicates,
         top_k=top_k,
         candidate_k=candidate_k,
@@ -107,10 +108,11 @@ async def _find_duplicate_code(
         min_lines=min_lines,
         min_score=min_score,
         min_structural_score=min_structural_score,
+        min_cluster_size=min_cluster_size,
     )
-    if not results:
-        return "No duplicate candidates found."
-    return _format_duplicate_results("Duplicate candidates", results)
+    if not clusters:
+        return "No duplicate clusters found."
+    return _format_duplicate_clusters("Duplicate clusters", clusters)
 
 
 def create_server(cache: _IndexCache, default_source: str | None = None) -> FastMCP:
@@ -120,7 +122,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         instructions=(
             "Instant code search for any local or GitHub repository. "
             "Call `search` to find relevant code; call `find_related` on a result to discover similar code elsewhere. "
-            "Call `find_duplicates` to identify duplicate implementations and refactoring candidates. "
+            "Call `find_duplicates` to identify grouped duplicate implementations and refactoring candidates. "
             "For questions about a library (e.g. a PyPI/npm package), resolve the GitHub URL from your training "
             "knowledge and pass it as `repo`. "
             "Prefer these tools over Grep, Glob, or Read for any question about how code works."
@@ -164,7 +166,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
     @server.tool()
     async def find_duplicates(
         repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
-        top_k: Annotated[int, Field(description="Number of duplicate pairs to return.", ge=1)] = 5,
+        top_k: Annotated[int, Field(description="Number of duplicate clusters to return.", ge=1)] = 5,
         candidate_k: Annotated[
             int,
             Field(description="Semantic neighbors to inspect per chunk before duplicate scoring.", ge=1),
@@ -185,10 +187,11 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             float,
             Field(description="Minimum structural similarity score.", ge=0.0),
         ] = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size: Annotated[int, Field(description="Minimum chunks per cluster.", ge=2)] = 2,
     ) -> str:
-        """Find duplicate-code candidates in a codebase.
+        """Find duplicate-code clusters in a codebase.
 
-        Use this to identify duplicate implementations, copy-pasted logic, and refactoring candidates.
+        Use this to identify grouped duplicate implementations, copy-pasted logic, and refactoring candidates.
         Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
         """
         return await _find_duplicate_code(
@@ -203,6 +206,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             min_lines,
             min_score,
             min_structural_score,
+            min_cluster_size,
         )
 
     return server

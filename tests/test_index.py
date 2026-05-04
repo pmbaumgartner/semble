@@ -12,7 +12,7 @@ from semble import SembleIndex
 from semble.duplicates import duplicate_features
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend
-from semble.types import Chunk, DuplicateResult, DuplicateSignals, Encoder
+from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder
 
 
 @pytest.fixture
@@ -57,6 +57,10 @@ def _duplicate_index(chunks: list[Chunk]) -> SembleIndex:
     else:
         semantic_index = MagicMock()
     return SembleIndex(_ConstantModel(), MagicMock(), semantic_index, chunks)
+
+
+def _cluster_paths(cluster: DuplicateCluster) -> set[str]:
+    return {member.file_path for member in cluster.members}
 
 
 @pytest.mark.parametrize(
@@ -160,8 +164,8 @@ def test_find_related(indexed_index: SembleIndex) -> None:
     ]
 
 
-def test_find_duplicates_returns_ranked_pairs_and_respects_top_k() -> None:
-    """find_duplicates returns the strongest duplicate pair up to top_k."""
+def test_find_duplicates_returns_ranked_clusters_and_respects_top_k() -> None:
+    """find_duplicates returns the strongest duplicate cluster up to top_k."""
     left = _chunk(
         """\
 def total_price(items):
@@ -195,8 +199,9 @@ class Renderer:
     results = index.find_duplicates(top_k=1, min_lines=1)
 
     assert len(results) == 1
-    assert isinstance(results[0], DuplicateResult)
-    assert {results[0].left.file_path, results[0].right.file_path} == {"src/prices.py", "src/invoices.py"}
+    assert isinstance(results[0], DuplicateCluster)
+    assert _cluster_paths(results[0]) == {"src/prices.py", "src/invoices.py"}
+    assert isinstance(results[0].pairs[0], DuplicateResult)
 
 
 def test_find_duplicate_pairs_helper_returns_unsliced_sorted_pairs() -> None:
@@ -230,7 +235,9 @@ def total(items):
     )
 
     assert len(all_pairs) == 3
-    assert index.find_duplicates(top_k=1, min_lines=1, min_structural_score=0.0) == all_pairs[:1]
+    clusters = index.find_duplicates(top_k=1, min_lines=1, min_structural_score=0.0)
+    assert len(clusters) == 1
+    assert clusters[0].pairs == tuple(all_pairs)
     assert all_pairs == sorted(all_pairs, key=index._duplicate_sort_key)
 
 
@@ -288,7 +295,7 @@ def test_find_duplicates_precomputes_features_once_per_eligible_chunk(monkeypatc
 
 
 def test_find_duplicates_excludes_overlapping_same_file_ranges() -> None:
-    """Same-file overlapping chunks are not returned as duplicate pairs."""
+    """Same-file overlapping chunks are not returned as duplicate clusters."""
     content = """\
 def total(items):
     total = 0
@@ -325,8 +332,8 @@ def total(items):
     results = index.find_duplicates(top_k=10, min_lines=1)
 
     assert len(results) == 1
-    assert results[0].left.file_path == "src/a.py"
-    assert results[0].right.file_path == "src/b.py"
+    assert results[0].pairs[0].left.file_path == "src/a.py"
+    assert results[0].pairs[0].right.file_path == "src/b.py"
 
 
 def test_find_duplicates_filters_path_scopes() -> None:
@@ -353,7 +360,7 @@ def total(items):
         include_paths=["./src/"],
         exclude_paths=["src/generated/"],
     )
-    result_paths = {results[0].left.file_path, results[0].right.file_path}
+    result_paths = _cluster_paths(results[0])
 
     assert len(results) == 1
     assert result_paths == {"src/a.py", "src/nested/b.py"}
@@ -427,7 +434,7 @@ def total(items):
 
 
 def test_find_duplicates_respects_language_filter() -> None:
-    """Language filters restrict both sides of returned duplicate pairs."""
+    """Language filters restrict all returned duplicate cluster members."""
     content = """\
 def total(items):
     total = 0
@@ -446,12 +453,11 @@ def total(items):
     results = index.find_duplicates(top_k=10, min_lines=1, filter_languages=["python"])
 
     assert len(results) == 1
-    assert results[0].left.language == "python"
-    assert results[0].right.language == "python"
+    assert {member.language for member in results[0].members} == {"python"}
 
 
 def test_find_duplicates_respects_min_lines_and_min_score() -> None:
-    """Minimum line and score thresholds filter duplicate candidates."""
+    """Minimum line, score, and cluster-size thresholds filter duplicate clusters."""
     content = """\
 def add(a, b):
     return a + b
@@ -466,6 +472,7 @@ def add(a, b):
     assert index.find_duplicates(min_lines=3) == []
     assert len(index.find_duplicates(min_lines=1, min_score=1.0)) == 1
     assert index.find_duplicates(min_lines=1, min_score=1.01) == []
+    assert index.find_duplicates(min_lines=1, min_cluster_size=3) == []
 
 
 def test_find_duplicates_respects_default_structural_floor(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -527,8 +534,7 @@ def add(a, b):
     results = index.find_duplicates(min_lines=1)
 
     assert len(results) == 1
-    assert results[0].left.language is None
-    assert results[0].right.language is None
+    assert {member.language for member in results[0].members} == {None}
 
 
 def test_find_duplicates_excludes_docstring_only_chunks_when_parser_is_available() -> None:
@@ -631,7 +637,7 @@ class UserRecord:
 
 
 def test_find_duplicates_empty_or_non_positive_top_k_returns_empty() -> None:
-    """Empty indexes, singletons, and non-positive top_k return no duplicate pairs."""
+    """Empty indexes, singletons, and non-positive top_k return no duplicate clusters."""
     assert _duplicate_index([]).find_duplicates() == []
     assert _duplicate_index([_chunk("def add(a, b):\n    return a + b", "src/a.py")]).find_duplicates(min_lines=1) == []
 

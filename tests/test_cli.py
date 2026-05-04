@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from semble.cli import _CLAUDE_FILE_PATH, _cli_main, _run_init, main
-from semble.types import DuplicateResult, DuplicateSignals, SearchMode, SearchResult
+from semble.types import DuplicateCluster, DuplicateResult, DuplicateSignals, SearchMode, SearchResult
 from tests.conftest import make_chunk
 
 _CLAUDE_AGENT_FILE = files("semble").joinpath("agents/semble-search.md").read_text(encoding="utf-8")
@@ -17,6 +17,11 @@ def _duplicate_result() -> DuplicateResult:
     right = make_chunk("def right():\n    return 1", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
     return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+
+
+def _duplicate_cluster() -> DuplicateCluster:
+    result = _duplicate_result()
+    return DuplicateCluster(members=(result.left, result.right), pairs=(result,), score=result.score)
 
 
 @pytest.mark.parametrize(
@@ -108,7 +113,7 @@ def test_cli_find_duplicates_maps_options(
 ) -> None:
     """_cli_main find-duplicates maps CLI options to index.find_duplicates."""
     fake_index = MagicMock()
-    fake_index.find_duplicates.return_value = [_duplicate_result()]
+    fake_index.find_duplicates.return_value = [_duplicate_cluster()]
     monkeypatch.setattr(
         sys,
         "argv",
@@ -139,6 +144,8 @@ def test_cli_find_duplicates_maps_options(
             "0.25",
             "--min-structural-score",
             "0.42",
+            "--min-cluster-size",
+            "3",
         ],
     )
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
@@ -162,9 +169,10 @@ def test_cli_find_duplicates_maps_options(
         min_lines=4,
         min_score=0.25,
         min_structural_score=0.42,
+        min_cluster_size=3,
     )
     out = capsys.readouterr().out
-    assert "Duplicate candidates" in out
+    assert "Duplicate clusters" in out
     assert "src/left.py" in out
     assert "semantic=0.900" in out
 
@@ -198,8 +206,9 @@ def test_cli_find_duplicates_empty_state(
         min_lines=8,
         min_score=0.0,
         min_structural_score=0.4,
+        min_cluster_size=2,
     )
-    assert "No duplicate candidates found." in capsys.readouterr().out
+    assert "No duplicate clusters found." in capsys.readouterr().out
 
 
 def test_cli_find_duplicates_uses_git_url(
@@ -219,7 +228,7 @@ def test_cli_find_duplicates_uses_git_url(
         exclude_paths=None,
         include_tests=False,
     )
-    assert "No duplicate candidates found." in capsys.readouterr().out
+    assert "No duplicate clusters found." in capsys.readouterr().out
 
 
 def test_init_creates_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -288,7 +297,7 @@ def test_main_dispatches_find_duplicates_to_cli(
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
         main()
 
-    assert "No duplicate candidates found." in capsys.readouterr().out
+    assert "No duplicate clusters found." in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

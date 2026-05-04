@@ -5,7 +5,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
-from semble.utils import _format_duplicate_results, _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
 _CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "find-duplicates", "init", "-h", "--help"})
@@ -67,9 +67,9 @@ def _cli_main() -> None:
     related_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
     related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
 
-    duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code candidates.")
+    duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code clusters.")
     duplicates_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
-    duplicates_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of duplicate pairs (default: 5).")
+    duplicates_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of duplicate clusters (default: 5).")
     duplicates_p.add_argument(
         "--candidate-k",
         type=int,
@@ -94,6 +94,7 @@ def _cli_main() -> None:
         default=DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
         help=f"Minimum structural similarity score (default: {DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE:.2f}).",
     )
+    duplicates_p.add_argument("--min-cluster-size", type=int, default=2, help="Minimum chunks per cluster (default: 2).")
 
     init_p = sub.add_parser("init", help="Write .claude/agents/semble-search.md for Claude Code sub-agent support.")
     init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
@@ -148,8 +149,9 @@ def _cli_main() -> None:
             min_lines=args.min_lines,
             min_score=args.min_score,
             min_structural_score=args.min_structural_score,
+            min_cluster_size=args.min_cluster_size,
         )
         if not results:
-            print("No duplicate candidates found.")
+            print("No duplicate clusters found.")
         else:
-            print(_format_duplicate_results("Duplicate candidates", results))
+            print(_format_duplicate_clusters("Duplicate clusters", results))

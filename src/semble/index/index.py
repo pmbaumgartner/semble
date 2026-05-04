@@ -13,6 +13,7 @@ from semble.duplicates import (
     DuplicateFeatures,
     _pair_key,
     _same_file_ranges_overlap,
+    cluster_duplicate_pairs,
     duplicate_features,
     duplicate_features_are_eligible,
     duplicate_score,
@@ -22,7 +23,7 @@ from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
 from semble.path_filters import normalize_scope_path, path_in_scope, path_is_included
 from semble.search import search_bm25, search_hybrid, search_semantic
-from semble.types import Chunk, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
+from semble.types import Chunk, DuplicateCluster, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
 
 DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
 
@@ -204,32 +205,34 @@ class SembleIndex:
         min_lines: int = 8,
         min_score: float = 0.0,
         min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size: int = 2,
         filter_languages: list[str] | None = None,
         include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
         include_tests: bool = False,
         include_data: bool = False,
         include_scaffolding: bool = False,
-    ) -> list[DuplicateResult]:
-        """Return ranked duplicate-code candidate pairs from indexed chunks.
+    ) -> list[DuplicateCluster]:
+        """Return ranked duplicate-code clusters from indexed chunks.
 
-        :param top_k: Number of duplicate pairs to return.
+        :param top_k: Number of duplicate clusters to return.
         :param candidate_k: Number of semantic neighbors to inspect per eligible chunk.
         :param min_lines: Minimum content line count required for each side.
-        :param min_score: Minimum final duplicate score to return.
-        :param min_structural_score: Minimum structural similarity score to return.
+        :param min_score: Minimum final duplicate score for a pair edge.
+        :param min_structural_score: Minimum structural similarity score for a pair edge.
+        :param min_cluster_size: Minimum number of chunks in a returned cluster.
         :param filter_languages: Optional exact language filters.
         :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
         :param include_tests: Whether test-looking paths are eligible duplicate candidates.
         :param include_data: Whether static data/config chunks are eligible duplicate candidates.
         :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
-        :return: Ranked list of duplicate candidate pairs, best match first.
+        :return: Ranked list of duplicate clusters, best match first.
         """
         if top_k <= 0:
             return []
 
-        return self._find_duplicate_pairs(
+        pairs = self._find_duplicate_pairs(
             candidate_k=candidate_k,
             min_lines=min_lines,
             min_score=min_score,
@@ -240,7 +243,8 @@ class SembleIndex:
             include_tests=include_tests,
             include_data=include_data,
             include_scaffolding=include_scaffolding,
-        )[:top_k]
+        )
+        return cluster_duplicate_pairs(pairs, min_cluster_size=min_cluster_size)[:top_k]
 
     def _find_duplicate_pairs(
         self,
