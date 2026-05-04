@@ -60,6 +60,8 @@ result.chunk.end_line    # 150
 result.chunk.content     # "def save_pretrained(self, path: PathLike, ..."
 ```
 
+`search(filter_paths=...)` matches exact indexed file paths. For file-or-directory scopes, use `search(include_paths=..., exclude_paths=...)`; scoped paths cannot be combined with exact `filter_paths`.
+
 ## Main Features
 
 - **Fast**: indexes a repo in ~250 ms and answers queries in ~1.5 ms, all on CPU.
@@ -124,6 +126,8 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
 | `find_duplicates` | Find grouped duplicate implementations and refactoring candidates in a codebase. |
 
+All MCP tools accept `ref` for git branches or tags when indexing a git URL. If the server was started with a default git URL and `--ref`, default tool calls keep using that ref.
+
 ### Sub-agent support
 
 Claude Code and Codex CLI lazy-load MCP tool schemas, so sub-agents cannot call `mcp__semble__search` directly. The fix is to invoke semble through the [CLI](#cli) via Bash instead.
@@ -171,7 +175,7 @@ semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. Use `--min-cluster-size 3` to focus on larger repeated patterns; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include those files.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. The Python API indexes tests by default, but `find_duplicates()` skips test-looking chunks unless `include_tests=True`; the CLI `find-duplicates` command skips tests during both indexing and scanning unless `--include-tests` is passed. Use `--min-cluster-size 3` to focus on larger repeated patterns; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include those files.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -232,7 +236,7 @@ semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. The Python API indexes tests by default, but `find_duplicates()` skips test-looking chunks unless `include_tests=True`; the CLI `find-duplicates` command skips tests during both indexing and scanning unless `--include-tests` is passed.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 

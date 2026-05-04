@@ -1,4 +1,4 @@
-from semble.index import SembleIndex
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.types import (
     Chunk,
     DuplicateCluster,
@@ -14,6 +14,7 @@ from semble.version import __version__
 
 __all__ = [
     "Chunk",
+    "DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE",
     "DuplicateCluster",
     "DuplicateResult",
     "DuplicateSignals",

@@ -25,7 +25,7 @@ def _duplicate_cluster(*, extra_pair: bool = False) -> DuplicateCluster:
         extra = DuplicateResult(left=result.right, right=third, score=0.75, signals=result.signals)
         pairs = (result, extra)
         members = (result.left, result.right, third)
-    return DuplicateCluster(members=members, pairs=pairs, score=result.score)
+    return DuplicateCluster(members=members, pairs=pairs)
 
 
 def test_format_duplicate_clusters_empty() -> None:

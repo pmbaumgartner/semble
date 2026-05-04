@@ -79,7 +79,11 @@ def _cli_main() -> None:
     duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
     duplicates_p.add_argument("--include", action="append", dest="include_paths", help="File or directory scope to include.")
     duplicates_p.add_argument("--exclude", action="append", dest="exclude_paths", help="File or directory scope to exclude.")
-    duplicates_p.add_argument("--include-tests", action="store_true", help="Include test files in duplicate discovery.")
+    duplicates_p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include test files while indexing and scanning for duplicates.",
+    )
     duplicates_p.add_argument("--include-data", action="store_true", help="Include static data/config chunks in duplicate discovery.")
     duplicates_p.add_argument(
         "--include-scaffolding",

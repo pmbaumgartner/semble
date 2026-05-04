@@ -21,7 +21,7 @@ def _duplicate_result() -> DuplicateResult:
 
 def _duplicate_cluster() -> DuplicateCluster:
     result = _duplicate_result()
-    return DuplicateCluster(members=(result.left, result.right), pairs=(result,), score=result.score)
+    return DuplicateCluster(members=(result.left, result.right), pairs=(result,))
 
 
 @pytest.mark.parametrize(

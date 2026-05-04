@@ -1,4 +1,4 @@
-"""Internal helpers for duplicate-code scoring."""
+"""Private helpers for duplicate-code scoring."""
 
 from __future__ import annotations
 
@@ -472,7 +472,7 @@ def cluster_duplicate_pairs(
             )
         )
         members = tuple(chunks_by_key[key] for key in sorted(component))
-        clusters.append(DuplicateCluster(members=members, pairs=component_pairs, score=component_pairs[0].score))
+        clusters.append(DuplicateCluster(members=members, pairs=component_pairs))
 
     return sorted(clusters, key=_duplicate_cluster_sort_key)
 

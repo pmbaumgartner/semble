@@ -32,7 +32,7 @@ semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. Use `--min-cluster-size 3` to focus on larger repeated patterns; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include those files.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. The CLI skips tests during both indexing and scanning unless `--include-tests` is passed. Use `--min-cluster-size 3` to focus on larger repeated patterns; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include those files.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 

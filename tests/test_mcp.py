@@ -53,7 +53,7 @@ def _duplicate_result() -> DuplicateResult:
 def _duplicate_cluster() -> DuplicateCluster:
     """Return a representative duplicate cluster for MCP tests."""
     result = _duplicate_result()
-    return DuplicateCluster(members=(result.left, result.right), pairs=(result,), score=result.score)
+    return DuplicateCluster(members=(result.left, result.right), pairs=(result,))
 
 
 def test_resolve_chunk() -> None:
@@ -303,7 +303,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
         )
 
     assert "Duplicate clusters" in _tool_text(result)
-    mock_get.assert_awaited_once_with("/some/path")
+    mock_get.assert_awaited_once_with("/some/path", ref=None)
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
         top_k=7,
@@ -322,6 +322,70 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool", "args", "index_method", "index_return", "index_chunks"),
+    [
+        (
+            "search",
+            {"query": "foo", "repo": "https://github.com/x/y", "ref": "feature"},
+            "search",
+            [],
+            None,
+        ),
+        (
+            "find_related",
+            {
+                "file_path": "src/foo.py",
+                "line": 1,
+                "repo": "https://github.com/x/y",
+                "ref": "feature",
+            },
+            "find_related",
+            [],
+            [make_chunk("def foo(): pass", "src/foo.py")],
+        ),
+        (
+            "find_duplicates",
+            {"repo": "https://github.com/x/y", "ref": "feature"},
+            "find_duplicates",
+            [],
+            None,
+        ),
+    ],
+)
+async def test_tools_pass_explicit_ref_to_cache(
+    cache: _IndexCache,
+    tool: str,
+    args: dict[str, Any],
+    index_method: str,
+    index_return: list[SearchResult | DuplicateCluster],
+    index_chunks: list[Chunk] | None,
+) -> None:
+    """MCP tools pass explicit git refs into the cache lookup."""
+    fake_index = MagicMock()
+    getattr(fake_index, index_method).return_value = index_return
+    if index_chunks is not None:
+        fake_index.chunks = index_chunks
+    with patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get:
+        server = create_server(cache)
+        await server.call_tool(tool, args)
+
+    mock_get.assert_awaited_once_with("https://github.com/x/y", ref="feature")
+
+
+@pytest.mark.anyio
+async def test_default_source_uses_default_ref(cache: _IndexCache) -> None:
+    """Default MCP tool calls keep the startup ref attached to the default source."""
+    fake_index = MagicMock()
+    fake_index.search.return_value = []
+    with patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get:
+        server = create_server(cache, default_source="https://github.com/x/y", default_ref="main")
+        await server.call_tool("search", {"query": "foo"})
+
+    mock_get.assert_awaited_once_with("https://github.com/x/y", ref="main")
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("with_path", [True, False], ids=["pre_index", "no_path"])
 async def test_serve_runs_stdio(tmp_path: Path, with_path: bool) -> None:
     """serve() loads the model, runs stdio, and optionally pre-indexes when a path is given."""
@@ -333,3 +397,21 @@ async def test_serve_runs_stdio(tmp_path: Path, with_path: bool) -> None:
         await (serve(str(tmp_path)) if with_path else serve())
 
     mock_run.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_serve_preserves_default_git_ref() -> None:
+    """serve() pre-indexes and exposes the same default git ref to later tool calls."""
+    fake_server = MagicMock()
+    fake_server.run_stdio_async = AsyncMock()
+    with (
+        patch("semble.mcp.load_model", return_value=MagicMock(spec=Encoder)),
+        patch("semble.mcp.SembleIndex.from_git", return_value=MagicMock()),
+        patch("semble.mcp.create_server", return_value=fake_server) as mock_create_server,
+    ):
+        await serve("https://github.com/x/y", ref="feature")
+
+    mock_create_server.assert_called_once()
+    assert mock_create_server.call_args.kwargs["default_source"] == "https://github.com/x/y"
+    assert mock_create_server.call_args.kwargs["default_ref"] == "feature"
+    fake_server.run_stdio_async.assert_awaited_once()

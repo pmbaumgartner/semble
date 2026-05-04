@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 from bm25s import BM25
 
-from semble.duplicates import (
+from semble._duplicates import (
     DuplicateFeatures,
     _pair_key,
     _same_file_ranges_overlap,
@@ -98,7 +98,9 @@ class SembleIndex:
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
         :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-        :param include_tests: Whether test-looking paths should be indexed.
+        :param include_tests: Whether test-looking paths should be indexed. Defaults to
+            True; duplicate discovery still skips test-looking chunks unless
+            ``find_duplicates(include_tests=True)`` is passed.
         :return: An indexed SembleIndex. Chunk file paths are relative to ``path``.
         :raises FileNotFoundError: If `path` does not exist.
         :raises NotADirectoryError: If `path` exists but is not a directory.
@@ -154,7 +156,9 @@ class SembleIndex:
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
         :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-        :param include_tests: Whether test-looking paths should be indexed.
+        :param include_tests: Whether test-looking paths should be indexed. Defaults to
+            True; duplicate discovery still skips test-looking chunks unless
+            ``find_duplicates(include_tests=True)`` is passed.
         :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
         :raises RuntimeError: If git is not on PATH or the clone fails.
         """
@@ -225,6 +229,8 @@ class SembleIndex:
         :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
         :param include_tests: Whether test-looking paths are eligible duplicate candidates.
+            This is independent of indexing; tests may be present in the index but are
+            skipped here by default.
         :param include_data: Whether static data/config chunks are eligible duplicate candidates.
         :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
         :return: Ranked list of duplicate clusters, best match first.
@@ -478,7 +484,42 @@ class SembleIndex:
         for filename in filter_paths or []:
             selector.extend(self._file_mapping.get(filename, []))
 
-        return np.unique(selector) if selector else None
+        if selector:
+            return np.unique(selector)
+        return np.array([], dtype=np.int_) if filter_languages or filter_paths else None
+
+    def _get_search_selector_vector(
+        self,
+        *,
+        filter_languages: list[str] | None = None,
+        filter_paths: list[str] | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
+    ) -> npt.NDArray[np.int_] | None:
+        """Create a search selector while keeping exact-file and scoped path filters distinct."""
+        if filter_paths is not None and (include_paths is not None or exclude_paths is not None):
+            raise ValueError(
+                "Use either filter_paths for exact indexed file paths or "
+                "include_paths/exclude_paths for file-or-directory scopes, not both."
+            )
+
+        if include_paths is None and exclude_paths is None:
+            return self._get_selector_vector(filter_languages, filter_paths)
+
+        eligible = set(range(len(self.chunks)))
+        if filter_languages:
+            language_indices: set[int] = set()
+            for language in filter_languages:
+                language_indices.update(self._language_mapping.get(language, []))
+            eligible &= language_indices
+
+        scoped_indices = {
+            index
+            for index, chunk in enumerate(self.chunks)
+            if path_is_included(chunk.file_path, include_paths=include_paths, exclude_paths=exclude_paths)
+        }
+        eligible &= scoped_indices
+        return np.array(sorted(eligible), dtype=np.int_)
 
     def search(
         self,
@@ -488,6 +529,8 @@ class SembleIndex:
         alpha: float | None = None,
         filter_languages: list[str] | None = None,
         filter_paths: list[str] | None = None,
+        include_paths: list[str] | None = None,
+        exclude_paths: list[str] | None = None,
     ) -> list[SearchResult]:
         """Search the index and return the top-k most relevant chunks.
 
@@ -499,16 +542,29 @@ class SembleIndex:
             are applied regardless. ``None`` auto-detects from query type.
         :param filter_languages: Optional list of language codes; if set, only chunks in
             these languages are returned.
-        :param filter_paths: Optional list of repo-relative file paths; if set, only
-            chunks from these files are returned.
+        :param filter_paths: Optional list of exact repo-relative indexed file paths; if
+            set, only chunks from these files are returned. This legacy exact-file filter
+            cannot be combined with include_paths or exclude_paths.
+        :param include_paths: Optional repo-relative file or directory scopes to include.
+            Uses directory-scope semantics and intersects with filter_languages.
+        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+            Uses directory-scope semantics and intersects with filter_languages.
         :return: Ranked list of :class:`SearchResult` objects, best match first.
-        :raises ValueError: If `mode` is not a recognised search strategy.
+        :raises ValueError: If `mode` is not a recognised search strategy, or if exact
+            filter_paths are combined with scoped include_paths/exclude_paths.
         """
         bm25_index, semantic_index = self._bm25_index, self._semantic_index
         if not self.chunks or not query.strip():
             return []
 
-        selector = self._get_selector_vector(filter_languages, filter_paths)
+        selector = self._get_search_selector_vector(
+            filter_languages=filter_languages,
+            filter_paths=filter_paths,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+        )
+        if selector is not None and len(selector) == 0:
+            return []
 
         if mode == SearchMode.BM25:
             return search_bm25(query, bm25_index, self.chunks, top_k, selector=selector)

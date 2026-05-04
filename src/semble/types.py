@@ -77,7 +77,11 @@ class DuplicateCluster:
 
     members: tuple[Chunk, ...]
     pairs: tuple[DuplicateResult, ...]
-    score: float
+
+    @property
+    def score(self) -> float:
+        """Ranking score for the strongest pair in the cluster."""
+        return self.pairs[0].score if self.pairs else 0.0
 
 
 @dataclass(frozen=True, slots=True)

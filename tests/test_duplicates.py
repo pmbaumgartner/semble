@@ -1,8 +1,8 @@
 import pytest
 
-import semble.duplicates as duplicates
-from semble import DuplicateCluster, DuplicateResult, DuplicateSignals
-from semble.duplicates import (
+import semble._duplicates as duplicates
+from semble import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateCluster, DuplicateResult, DuplicateSignals
+from semble._duplicates import (
     _jaccard,
     _normalize_ast_label,
     _pair_key,
@@ -48,7 +48,7 @@ def test_duplicate_types_are_exported() -> None:
     right = make_chunk("def right():\n    return 1", "right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.8)
     result = DuplicateResult(left=left, right=right, score=0.84, signals=signals)
-    cluster = DuplicateCluster(members=(left, right), pairs=(result,), score=result.score)
+    cluster = DuplicateCluster(members=(left, right), pairs=(result,))
 
     assert result.left is left
     assert result.right is right
@@ -56,6 +56,7 @@ def test_duplicate_types_are_exported() -> None:
     assert cluster.members == (left, right)
     assert cluster.pairs == (result,)
     assert cluster.score == result.score
+    assert DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE == 0.4
 
 
 def test_score_duplicate_pair_ranks_renamed_code_above_unrelated_code() -> None:

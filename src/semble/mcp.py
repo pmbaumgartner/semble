@@ -17,31 +17,49 @@ _REPO_DESCRIPTION = (
     "Required when no default index was configured at startup. "
     "The index is cached after the first call, so repeat queries are fast."
 )
+_REF_DESCRIPTION = "Branch or tag to check out for git URLs. Ignored for local paths."
 _NO_REPO_MESSAGE = (
     "No repo specified and no default index. "
     "Pass a git URL (https://github.com/...) or local path as `repo`."
 )
 
 
-async def _get_index_or_error(cache: _IndexCache, source: str | None) -> tuple[SembleIndex | None, str | None]:
+async def _get_index_or_error(
+    cache: _IndexCache,
+    source: str | None,
+    ref: str | None = None,
+) -> tuple[SembleIndex | None, str | None]:
     """Return an index for source, or a user-facing MCP error message."""
     if not source:
         return None, _NO_REPO_MESSAGE
     try:
-        return await cache.get(source), None
+        return await cache.get(source, ref=ref), None
     except Exception as exc:
         return None, f"Failed to index {source!r}: {exc}"
+
+
+def _resolve_source_ref(
+    repo: str | None,
+    ref: str | None,
+    default_source: str | None,
+    default_ref: str | None,
+) -> tuple[str | None, str | None]:
+    """Return the effective source and ref for an MCP tool call."""
+    if repo:
+        return repo, ref
+    return default_source, ref if ref is not None else default_ref
 
 
 async def _search_codebase(
     cache: _IndexCache,
     source: str | None,
+    ref: str | None,
     query: str,
     mode: Literal["hybrid", "semantic", "bm25"],
     top_k: int,
 ) -> str:
     """Search a codebase and format MCP text output."""
-    index, error = await _get_index_or_error(cache, source)
+    index, error = await _get_index_or_error(cache, source, ref=ref)
     if error:
         return error
     assert index is not None
@@ -55,12 +73,13 @@ async def _search_codebase(
 async def _find_related_code(
     cache: _IndexCache,
     source: str | None,
+    ref: str | None,
     file_path: str,
     line: int,
     top_k: int,
 ) -> str:
     """Find related code for a source location and format MCP text output."""
-    index, error = await _get_index_or_error(cache, source)
+    index, error = await _get_index_or_error(cache, source, ref=ref)
     if error:
         return error
     assert index is not None
@@ -80,6 +99,7 @@ async def _find_related_code(
 async def _find_duplicate_code(
     cache: _IndexCache,
     source: str | None,
+    ref: str | None,
     top_k: int,
     candidate_k: int,
     language: str | None,
@@ -94,7 +114,7 @@ async def _find_duplicate_code(
     min_cluster_size: int,
 ) -> str:
     """Find duplicate-code clusters and format MCP text output."""
-    index, error = await _get_index_or_error(cache, source)
+    index, error = await _get_index_or_error(cache, source, ref=ref)
     if error:
         return error
     assert index is not None
@@ -119,7 +139,11 @@ async def _find_duplicate_code(
     return _format_duplicate_clusters("Duplicate clusters", clusters)
 
 
-def create_server(cache: _IndexCache, default_source: str | None = None) -> FastMCP:
+def create_server(
+    cache: _IndexCache,
+    default_source: str | None = None,
+    default_ref: str | None = None,
+) -> FastMCP:
     """Build and return a configured FastMCP server backed by the given cache."""
     server = FastMCP(
         "semble",
@@ -142,13 +166,16 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             Field(description="Search mode. 'hybrid' is best for most queries."),
         ] = "hybrid",
         top_k: Annotated[int, Field(description="Number of results to return.", ge=1)] = 5,
+        ref: Annotated[str | None, Field(description=_REF_DESCRIPTION)] = None,
     ) -> str:
         """Search a codebase with a natural-language or code query.
 
-        Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
+        Pass a git URL or local path as `repo` to index it on demand; pass `ref` for a git branch or tag.
+        Indexes are cached for the session.
         Use this to find where something is implemented, understand a library, or locate related code.
         """
-        return await _search_codebase(cache, repo or default_source, query, mode, top_k)
+        source, source_ref = _resolve_source_ref(repo, ref, default_source, default_ref)
+        return await _search_codebase(cache, source, source_ref, query, mode, top_k)
 
     @server.tool()
     async def find_related(
@@ -159,17 +186,20 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         line: Annotated[int, Field(description="Line number (1-indexed).")],
         repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
         top_k: Annotated[int, Field(description="Number of similar chunks to return.", ge=1)] = 5,
+        ref: Annotated[str | None, Field(description=_REF_DESCRIPTION)] = None,
     ) -> str:
         """Find code chunks semantically similar to a specific location in a file.
 
         Use after `search` to explore related implementations or callers.
         Pass file_path and line from a prior search result.
         """
-        return await _find_related_code(cache, repo or default_source, file_path, line, top_k)
+        source, source_ref = _resolve_source_ref(repo, ref, default_source, default_ref)
+        return await _find_related_code(cache, source, source_ref, file_path, line, top_k)
 
     @server.tool()
     async def find_duplicates(
         repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
+        ref: Annotated[str | None, Field(description=_REF_DESCRIPTION)] = None,
         top_k: Annotated[int, Field(description="Number of duplicate clusters to return.", ge=1)] = 5,
         candidate_k: Annotated[
             int,
@@ -204,11 +234,14 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         """Find duplicate-code clusters in a codebase.
 
         Use this to identify grouped duplicate implementations, copy-pasted logic, and refactoring candidates.
-        Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
+        Pass a git URL or local path as `repo` to index it on demand; pass `ref` for a git branch or tag.
+        Indexes are cached for the session.
         """
+        source, source_ref = _resolve_source_ref(repo, ref, default_source, default_ref)
         return await _find_duplicate_code(
             cache,
-            repo or default_source,
+            source,
+            source_ref,
             top_k,
             candidate_k,
             language,
@@ -233,7 +266,7 @@ async def serve(path: str | None = None, ref: str | None = None) -> None:
     if path:
         await cache.get(path, ref=ref)
 
-    server = create_server(cache, default_source=path)
+    server = create_server(cache, default_source=path, default_ref=ref)
     await server.run_stdio_async()
 
 

@@ -9,7 +9,7 @@ from vicinity.backends.basic import BasicArgs
 
 import semble.index.index as index_module
 from semble import SembleIndex
-from semble.duplicates import duplicate_features
+from semble._duplicates import duplicate_features
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend
 from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder
@@ -140,6 +140,30 @@ def test_search_with_filter_paths_does_not_crash(indexed_index: SembleIndex, mod
     target_path = indexed_index.chunks[-1].file_path
     results = indexed_index.search("function", top_k=3, mode=mode, filter_paths=[target_path])
     assert all(r.chunk.file_path == target_path for r in results)
+
+
+def test_search_scoped_paths_are_directory_aware_and_guard_legacy_filter_paths() -> None:
+    """Scoped search paths support directory prefixes and cannot mix with exact-file filters."""
+    index = _duplicate_index(
+        [
+            _chunk("def total(items):\n    return sum(items)", "src/a.py"),
+            _chunk("def total(items):\n    return sum(items)", "src/nested/b.py"),
+            _chunk("def total(items):\n    return sum(items)", "src/generated/c.py"),
+            _chunk("def total(items):\n    return sum(items)", "tests/test_total.py"),
+        ]
+    )
+
+    results = index.search(
+        "total",
+        top_k=10,
+        mode="semantic",
+        include_paths=["src"],
+        exclude_paths=["src/generated"],
+    )
+
+    assert {result.chunk.file_path for result in results} == {"src/a.py", "src/nested/b.py"}
+    with pytest.raises(ValueError, match="filter_paths"):
+        index.search("total", filter_paths=["src/a.py"], include_paths=["src"])
 
 
 @pytest.mark.parametrize("mode", ["bm25", "hybrid", "semantic"])
