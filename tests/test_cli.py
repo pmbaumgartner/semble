@@ -137,6 +137,8 @@ def test_cli_find_duplicates_maps_options(
             "4",
             "--min-score",
             "0.25",
+            "--min-structural-score",
+            "0.42",
         ],
     )
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
@@ -159,6 +161,7 @@ def test_cli_find_duplicates_maps_options(
         include_scaffolding=True,
         min_lines=4,
         min_score=0.25,
+        min_structural_score=0.42,
     )
     out = capsys.readouterr().out
     assert "Duplicate candidates" in out
@@ -194,6 +197,7 @@ def test_cli_find_duplicates_empty_state(
         include_scaffolding=False,
         min_lines=8,
         min_score=0.0,
+        min_structural_score=0.4,
     )
     assert "No duplicate candidates found." in capsys.readouterr().out
 

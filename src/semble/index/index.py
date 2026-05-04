@@ -24,6 +24,8 @@ from semble.path_filters import normalize_scope_path, path_in_scope, path_is_inc
 from semble.search import search_bm25, search_hybrid, search_semantic
 from semble.types import Chunk, DuplicateResult, Encoder, IndexStats, SearchMode, SearchResult
 
+DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
+
 
 class SembleIndex:
     """Fast local code index with hybrid search."""
@@ -201,6 +203,7 @@ class SembleIndex:
         candidate_k: int = 12,
         min_lines: int = 8,
         min_score: float = 0.0,
+        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
         filter_languages: list[str] | None = None,
         include_paths: list[str] | None = None,
         exclude_paths: list[str] | None = None,
@@ -214,6 +217,7 @@ class SembleIndex:
         :param candidate_k: Number of semantic neighbors to inspect per eligible chunk.
         :param min_lines: Minimum content line count required for each side.
         :param min_score: Minimum final duplicate score to return.
+        :param min_structural_score: Minimum structural similarity score to return.
         :param filter_languages: Optional exact language filters.
         :param include_paths: Optional repo-relative file or directory scopes to include.
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
@@ -248,6 +252,7 @@ class SembleIndex:
                 features_by_index=features_by_index,
                 candidate_k=candidate_k,
                 min_score=min_score,
+                min_structural_score=min_structural_score,
                 pairs=pairs,
             )
 
@@ -289,6 +294,7 @@ class SembleIndex:
         features_by_index: dict[int, DuplicateFeatures],
         candidate_k: int,
         min_score: float,
+        min_structural_score: float,
         pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
     ) -> None:
         """Collect duplicate pairs from one same-language candidate group."""
@@ -310,6 +316,7 @@ class SembleIndex:
                     semantic_score=1.0 - float(distance),
                     features_by_index=features_by_index,
                     min_score=min_score,
+                    min_structural_score=min_structural_score,
                     pairs=pairs,
                 )
 
@@ -321,6 +328,7 @@ class SembleIndex:
         semantic_score: float,
         features_by_index: dict[int, DuplicateFeatures],
         min_score: float,
+        min_structural_score: float,
         pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
     ) -> None:
         """Score and record one duplicate pair if it passes pair-level gates."""
@@ -337,6 +345,8 @@ class SembleIndex:
             features_by_index[right_index],
             semantic_score=semantic_score,
         )
+        if signals.structural_score < min_structural_score:
+            return
         score = duplicate_score(signals)
         if score <= 0.0 or score < min_score:
             return

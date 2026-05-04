@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from semble.index import SembleIndex
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
 from semble.utils import _format_duplicate_results, _format_results, _is_git_url, _resolve_chunk
@@ -88,6 +88,7 @@ async def _find_duplicate_code(
     include_scaffolding: bool,
     min_lines: int,
     min_score: float,
+    min_structural_score: float,
 ) -> str:
     """Find duplicate-code candidates and format MCP text output."""
     index, error = await _get_index_or_error(cache, source)
@@ -105,6 +106,7 @@ async def _find_duplicate_code(
         include_scaffolding=include_scaffolding,
         min_lines=min_lines,
         min_score=min_score,
+        min_structural_score=min_structural_score,
     )
     if not results:
         return "No duplicate candidates found."
@@ -179,6 +181,10 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         ] = False,
         min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
         min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,
+        min_structural_score: Annotated[
+            float,
+            Field(description="Minimum structural similarity score.", ge=0.0),
+        ] = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
     ) -> str:
         """Find duplicate-code candidates in a codebase.
 
@@ -196,6 +202,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             include_scaffolding,
             min_lines,
             min_score,
+            min_structural_score,
         )
 
     return server

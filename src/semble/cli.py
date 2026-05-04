@@ -4,7 +4,7 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from semble.index import SembleIndex
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.utils import _format_duplicate_results, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
@@ -88,6 +88,12 @@ def _cli_main() -> None:
     )
     duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
     duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
+    duplicates_p.add_argument(
+        "--min-structural-score",
+        type=float,
+        default=DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        help=f"Minimum structural similarity score (default: {DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE:.2f}).",
+    )
 
     init_p = sub.add_parser("init", help="Write .claude/agents/semble-search.md for Claude Code sub-agent support.")
     init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
@@ -141,6 +147,7 @@ def _cli_main() -> None:
             include_scaffolding=args.include_scaffolding,
             min_lines=args.min_lines,
             min_score=args.min_score,
+            min_structural_score=args.min_structural_score,
         )
         if not results:
             print("No duplicate candidates found.")

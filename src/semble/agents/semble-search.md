@@ -24,13 +24,14 @@ Use `semble find-duplicates` to identify duplicate implementations, copy-pasted 
 semble find-duplicates ./my-project
 semble find-duplicates ./my-project --language python
 semble find-duplicates ./my-project --candidate-k 24
+semble find-duplicates ./my-project --min-structural-score 0.35
 semble find-duplicates ./my-project --include-tests
 semble find-duplicates ./my-project --include-data
 semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery excludes tests, static data/config chunks, and scaffolding-only chunks by default; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include them.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery requires structural similarity of at least `0.40` by default and excludes tests, static data/config chunks, and scaffolding-only chunks by default; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include them.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 

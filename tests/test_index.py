@@ -12,7 +12,7 @@ from semble import SembleIndex
 from semble.duplicates import duplicate_features
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend
-from semble.types import Chunk, DuplicateResult, Encoder
+from semble.types import Chunk, DuplicateResult, DuplicateSignals, Encoder
 
 
 @pytest.fixture
@@ -431,6 +431,32 @@ def add(a, b):
     assert index.find_duplicates(min_lines=3) == []
     assert len(index.find_duplicates(min_lines=1, min_score=1.0)) == 1
     assert index.find_duplicates(min_lines=1, min_score=1.01) == []
+
+
+def test_find_duplicates_respects_default_structural_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Weak structural pairs are filtered by default and can be included by lowering the floor."""
+    content = """\
+def add(a, b):
+    return a + b
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py"),
+            _chunk(content, "src/b.py"),
+        ]
+    )
+    monkeypatch.setattr(
+        index_module,
+        "score_duplicate_features",
+        lambda *args, **kwargs: DuplicateSignals(
+            semantic_score=0.9,
+            structural_score=0.39,
+            token_jaccard=0.39,
+        ),
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+    assert len(index.find_duplicates(min_lines=1, min_structural_score=0.39)) == 1
 
 
 def test_find_duplicates_excludes_cross_language_pairs() -> None:

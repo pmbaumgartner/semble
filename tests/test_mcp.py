@@ -289,6 +289,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
                 "include_scaffolding": True,
                 "min_lines": 4,
                 "min_score": 0.25,
+                "min_structural_score": 0.42,
             },
         )
 
@@ -304,6 +305,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
         include_scaffolding=True,
         min_lines=4,
         min_score=0.25,
+        min_structural_score=0.42,
     )
 
 
