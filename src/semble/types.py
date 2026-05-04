@@ -72,6 +72,15 @@ class DuplicateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DuplicateCluster:
+    """A connected group of duplicate candidate pairs."""
+
+    members: tuple[Chunk, ...]
+    pairs: tuple[DuplicateResult, ...]
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
 class IndexStats:
     """Statistics about the current index state."""
 
