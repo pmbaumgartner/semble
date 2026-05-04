@@ -1,7 +1,7 @@
 import pytest
 
 import semble.duplicates as duplicates
-from semble import DuplicateResult, DuplicateSignals
+from semble import DuplicateCluster, DuplicateResult, DuplicateSignals
 from semble.duplicates import (
     _jaccard,
     _normalize_ast_label,
@@ -9,6 +9,7 @@ from semble.duplicates import (
     _parser_language_for_chunk,
     _same_file_ranges_overlap,
     _weighted_structural_score,
+    cluster_duplicate_pairs,
     duplicate_features,
     duplicate_features_are_eligible,
     duplicate_score,
@@ -19,16 +20,42 @@ from semble.types import Chunk
 from tests.conftest import make_chunk
 
 
+def _duplicate_result(
+    left: Chunk,
+    right: Chunk,
+    *,
+    score: float = 0.9,
+    semantic_score: float | None = None,
+    structural_score: float | None = None,
+) -> DuplicateResult:
+    semantic_score = score if semantic_score is None else semantic_score
+    structural_score = score if structural_score is None else structural_score
+    return DuplicateResult(
+        left=left,
+        right=right,
+        score=score,
+        signals=DuplicateSignals(
+            semantic_score=semantic_score,
+            structural_score=structural_score,
+            token_jaccard=structural_score,
+        ),
+    )
+
+
 def test_duplicate_types_are_exported() -> None:
     """Duplicate result types are part of the package-level API."""
     left = make_chunk("def left():\n    return 1", "left.py")
     right = make_chunk("def right():\n    return 1", "right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.8)
     result = DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+    cluster = DuplicateCluster(members=(left, right), pairs=(result,), score=result.score)
 
     assert result.left is left
     assert result.right is right
     assert result.signals is signals
+    assert cluster.members == (left, right)
+    assert cluster.pairs == (result,)
+    assert cluster.score == result.score
 
 
 def test_score_duplicate_pair_ranks_renamed_code_above_unrelated_code() -> None:
@@ -404,6 +431,94 @@ def test_duplicate_score_uses_documented_blend() -> None:
     signals = DuplicateSignals(semantic_score=0.81, structural_score=0.64, token_jaccard=0.64)
 
     assert duplicate_score(signals) == pytest.approx(0.81**0.4 * 0.64**0.6)
+
+
+def test_cluster_duplicate_pairs_groups_connected_components() -> None:
+    """Connected duplicate pairs become one cluster per component."""
+    a = Chunk("a", "src/a.py", 1, 2, "python")
+    b = Chunk("b", "src/b.py", 1, 2, "python")
+    c = Chunk("c", "src/c.py", 1, 2, "python")
+    d = Chunk("d", "src/d.py", 1, 2, "python")
+    e = Chunk("e", "src/e.py", 1, 2, "python")
+
+    clusters = cluster_duplicate_pairs(
+        [
+            _duplicate_result(b, c, score=0.8),
+            _duplicate_result(d, e, score=0.7),
+            _duplicate_result(a, b, score=0.9),
+        ]
+    )
+
+    assert [[member.file_path for member in cluster.members] for cluster in clusters] == [
+        ["src/a.py", "src/b.py", "src/c.py"],
+        ["src/d.py", "src/e.py"],
+    ]
+
+
+def test_cluster_duplicate_pairs_keeps_size_two_clusters_by_default() -> None:
+    """A duplicate pair is represented as the smallest duplicate cluster."""
+    left = Chunk("left", "src/left.py", 1, 2, "python")
+    right = Chunk("right", "src/right.py", 1, 2, "python")
+
+    clusters = cluster_duplicate_pairs([_duplicate_result(left, right)])
+
+    assert len(clusters) == 1
+    assert clusters[0].members == (left, right)
+
+
+def test_cluster_duplicate_pairs_discards_small_components() -> None:
+    """Components smaller than min_cluster_size are omitted."""
+    left = Chunk("left", "src/left.py", 1, 2, "python")
+    right = Chunk("right", "src/right.py", 1, 2, "python")
+
+    assert cluster_duplicate_pairs([_duplicate_result(left, right)], min_cluster_size=3) == []
+
+
+def test_cluster_duplicate_pairs_clamps_min_cluster_size_to_two() -> None:
+    """min_cluster_size below two still returns only real duplicate clusters."""
+    left = Chunk("left", "src/left.py", 1, 2, "python")
+    right = Chunk("right", "src/right.py", 1, 2, "python")
+
+    clusters = cluster_duplicate_pairs([_duplicate_result(left, right)], min_cluster_size=1)
+
+    assert len(clusters) == 1
+    assert len(clusters[0].members) == 2
+
+
+def test_cluster_duplicate_pairs_sorts_members_pairs_and_clusters() -> None:
+    """Clusters, members, and pair edges are ordered deterministically."""
+    a = Chunk("a", "src/a.py", 1, 2, "python")
+    b = Chunk("b", "src/b.py", 1, 2, "python")
+    c = Chunk("c", "src/c.py", 1, 2, "python")
+    d = Chunk("d", "src/d.py", 1, 2, "python")
+    e = Chunk("e", "src/e.py", 1, 2, "python")
+    ac = _duplicate_result(a, c, score=0.7)
+    ab = _duplicate_result(a, b, score=0.9, semantic_score=0.8, structural_score=0.7)
+    bc = _duplicate_result(b, c, score=0.9, semantic_score=0.95, structural_score=0.6)
+    de = _duplicate_result(d, e, score=0.95)
+
+    clusters = cluster_duplicate_pairs([ac, de, ab, bc])
+
+    assert [[member.file_path for member in cluster.members] for cluster in clusters] == [
+        ["src/d.py", "src/e.py"],
+        ["src/a.py", "src/b.py", "src/c.py"],
+    ]
+    assert clusters[0].score == 0.95
+    assert clusters[1].score == 0.9
+    assert clusters[1].pairs == (bc, ab, ac)
+
+
+def test_cluster_duplicate_pairs_documents_weak_bridge_behavior() -> None:
+    """Connected components allow A/B plus B/C to cluster without an A/C edge."""
+    a = Chunk("a", "src/a.py", 1, 2, "python")
+    b = Chunk("b", "src/b.py", 1, 2, "python")
+    c = Chunk("c", "src/c.py", 1, 2, "python")
+
+    clusters = cluster_duplicate_pairs([_duplicate_result(a, b), _duplicate_result(b, c)])
+
+    assert len(clusters) == 1
+    assert [member.file_path for member in clusters[0].members] == ["src/a.py", "src/b.py", "src/c.py"]
+    assert len(clusters[0].pairs) == 2
 
 
 def test_same_file_ranges_overlap() -> None:

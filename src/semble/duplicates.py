@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from semble.types import Chunk, DuplicateSignals
+from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals
 
 _TOKEN_RE = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*"
@@ -419,6 +419,62 @@ def duplicate_score(signals: DuplicateSignals) -> float:
     return signals.semantic_score**0.4 * signals.structural_score**0.6
 
 
+def cluster_duplicate_pairs(
+    pairs: list[DuplicateResult],
+    *,
+    min_cluster_size: int = 2,
+) -> list[DuplicateCluster]:
+    """Group duplicate pairs into connected components of chunks."""
+    if not pairs:
+        return []
+
+    min_cluster_size = max(min_cluster_size, 2)
+    chunks_by_key: dict[tuple[str, int, int], Chunk] = {}
+    adjacency: dict[tuple[str, int, int], set[tuple[str, int, int]]] = {}
+
+    for pair in pairs:
+        left_key = _chunk_key(pair.left)
+        right_key = _chunk_key(pair.right)
+        chunks_by_key.setdefault(left_key, pair.left)
+        chunks_by_key.setdefault(right_key, pair.right)
+        adjacency.setdefault(left_key, set()).add(right_key)
+        adjacency.setdefault(right_key, set()).add(left_key)
+
+    clusters: list[DuplicateCluster] = []
+    visited: set[tuple[str, int, int]] = set()
+    for start_key in sorted(adjacency):
+        if start_key in visited:
+            continue
+
+        component: set[tuple[str, int, int]] = set()
+        stack = [start_key]
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            component.add(current)
+            stack.extend(adjacency[current] - visited)
+
+        if len(component) < min_cluster_size:
+            continue
+
+        component_pairs = tuple(
+            sorted(
+                (
+                    pair
+                    for pair in pairs
+                    if _chunk_key(pair.left) in component and _chunk_key(pair.right) in component
+                ),
+                key=_duplicate_pair_sort_key,
+            )
+        )
+        members = tuple(chunks_by_key[key] for key in sorted(component))
+        clusters.append(DuplicateCluster(members=members, pairs=component_pairs, score=component_pairs[0].score))
+
+    return sorted(clusters, key=_duplicate_cluster_sort_key)
+
+
 def _token_ngrams(content: str) -> set[str]:
     return _ngrams(_token_sequence(content), size=_NGRAM_SIZE)
 
@@ -694,3 +750,25 @@ def _pair_key(left: Chunk, right: Chunk) -> tuple[tuple[str, int, int], tuple[st
     left_key = _chunk_key(left)
     right_key = _chunk_key(right)
     return (left_key, right_key) if left_key <= right_key else (right_key, left_key)
+
+
+def _duplicate_pair_sort_key(
+    pair: DuplicateResult,
+) -> tuple[float, float, float, tuple[tuple[str, int, int], tuple[str, int, int]]]:
+    return (
+        -pair.score,
+        -pair.signals.semantic_score,
+        -pair.signals.structural_score,
+        _pair_key(pair.left, pair.right),
+    )
+
+
+def _duplicate_cluster_sort_key(
+    cluster: DuplicateCluster,
+) -> tuple[float, int, int, tuple[str, int, int]]:
+    return (
+        -cluster.score,
+        -len(cluster.pairs),
+        -len(cluster.members),
+        _chunk_key(cluster.members[0]),
+    )
