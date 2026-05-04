@@ -226,7 +226,38 @@ class SembleIndex:
         :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
         :return: Ranked list of duplicate candidate pairs, best match first.
         """
-        if not self.chunks or top_k <= 0:
+        if top_k <= 0:
+            return []
+
+        return self._find_duplicate_pairs(
+            candidate_k=candidate_k,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            filter_languages=filter_languages,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            include_data=include_data,
+            include_scaffolding=include_scaffolding,
+        )[:top_k]
+
+    def _find_duplicate_pairs(
+        self,
+        *,
+        candidate_k: int,
+        min_lines: int,
+        min_score: float,
+        min_structural_score: float,
+        filter_languages: list[str] | None,
+        include_paths: list[str] | None,
+        exclude_paths: list[str] | None,
+        include_tests: bool,
+        include_data: bool,
+        include_scaffolding: bool,
+    ) -> list[DuplicateResult]:
+        """Return all sorted duplicate candidate pairs without top-k slicing."""
+        if not self.chunks:
             return []
 
         features_by_index, eligible = self._eligible_duplicate_features(
@@ -256,7 +287,7 @@ class SembleIndex:
                 pairs=pairs,
             )
 
-        return sorted(pairs.values(), key=self._duplicate_sort_key)[:top_k]
+        return sorted(pairs.values(), key=self._duplicate_sort_key)
 
     def _eligible_duplicate_features(
         self,

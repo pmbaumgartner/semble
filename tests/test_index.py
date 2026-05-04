@@ -199,6 +199,41 @@ class Renderer:
     assert {results[0].left.file_path, results[0].right.file_path} == {"src/prices.py", "src/invoices.py"}
 
 
+def test_find_duplicate_pairs_helper_returns_unsliced_sorted_pairs() -> None:
+    """The private pair scan returns all sorted pairs for later clustering."""
+    content = """\
+def total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+"""
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.py"),
+            _chunk(content, "src/b.py"),
+            _chunk(content, "src/c.py"),
+        ]
+    )
+
+    all_pairs = index._find_duplicate_pairs(
+        candidate_k=12,
+        min_lines=1,
+        min_score=0.0,
+        min_structural_score=0.0,
+        filter_languages=None,
+        include_paths=None,
+        exclude_paths=None,
+        include_tests=False,
+        include_data=False,
+        include_scaffolding=False,
+    )
+
+    assert len(all_pairs) == 3
+    assert index.find_duplicates(top_k=1, min_lines=1, min_structural_score=0.0) == all_pairs[:1]
+    assert all_pairs == sorted(all_pairs, key=index._duplicate_sort_key)
+
+
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
     """Duplicate discovery reuses indexed embeddings instead of encoding each chunk again."""
     chunks = [
