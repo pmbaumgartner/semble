@@ -206,6 +206,7 @@ class SembleIndex:
         exclude_paths: list[str] | None = None,
         include_tests: bool = False,
         include_data: bool = False,
+        include_scaffolding: bool = False,
     ) -> list[DuplicateResult]:
         """Return ranked duplicate-code candidate pairs from indexed chunks.
 
@@ -218,6 +219,7 @@ class SembleIndex:
         :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
         :param include_tests: Whether test-looking paths are eligible duplicate candidates.
         :param include_data: Whether static data/config chunks are eligible duplicate candidates.
+        :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
         :return: Ranked list of duplicate candidate pairs, best match first.
         """
         if not self.chunks or top_k <= 0:
@@ -229,6 +231,7 @@ class SembleIndex:
             exclude_paths=exclude_paths,
             include_tests=include_tests,
             include_data=include_data,
+            include_scaffolding=include_scaffolding,
             min_lines=min_lines,
         )
         if not eligible:
@@ -258,6 +261,7 @@ class SembleIndex:
         exclude_paths: list[str] | None,
         include_tests: bool,
         include_data: bool,
+        include_scaffolding: bool,
         min_lines: int,
     ) -> tuple[dict[int, DuplicateFeatures], list[int]]:
         """Return duplicate features and indices for chunks that pass cheap eligibility gates."""
@@ -267,7 +271,11 @@ class SembleIndex:
             if self._line_count(self.chunks[index]) < min_lines:
                 continue
             features = duplicate_features(self.chunks[index])
-            if not duplicate_features_are_eligible(features, include_data=include_data):
+            if not duplicate_features_are_eligible(
+                features,
+                include_data=include_data,
+                include_scaffolding=include_scaffolding,
+            ):
                 continue
             features_by_index[index] = features
             eligible.append(index)

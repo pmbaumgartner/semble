@@ -150,6 +150,72 @@ _STATIC_BINDING_NODE_TYPES = frozenset(
         "variable_declarator",
     }
 )
+_SCAFFOLDING_NODE_TYPES = frozenset(
+    {
+        "annotation",
+        "annotation_argument_list",
+        "attribute",
+        "attribute_group",
+        "attribute_item",
+        "attribute_list",
+        "decorator",
+        "export_clause",
+        "export_specifier",
+        "export_statement",
+        "import_declaration",
+        "import_from_statement",
+        "import_spec",
+        "import_spec_list",
+        "import_statement",
+        "inner_attribute_item",
+        "marker_annotation",
+        "namespace_declaration",
+        "namespace_definition",
+        "namespace_use_clause",
+        "namespace_use_declaration",
+        "package_clause",
+        "package_declaration",
+        "php_tag",
+        "scoped_use_list",
+        "use_declaration",
+        "use_list",
+        "using_declaration",
+        "using_directive",
+    }
+)
+_NON_SUBSTANTIVE_NODE_TYPES = frozenset(
+    {
+        "annotation_type_body",
+        "argument_list",
+        "array_type",
+        "block",
+        "body",
+        "class_body",
+        "compound_statement",
+        "declaration_list",
+        "dimensions",
+        "enum_body",
+        "formal_parameters",
+        "generic_type",
+        "interface_body",
+        "modifier",
+        "modifiers",
+        "module",
+        "parameter_list",
+        "parameters",
+        "predefined_type",
+        "primitive_type",
+        "program",
+        "qualified_type",
+        "script",
+        "source_file",
+        "token_tree",
+        "translation_unit",
+        "type",
+        "type_annotation",
+        "visibility_modifier",
+    }
+)
 
 _KEYWORDS = frozenset(
     {
@@ -233,6 +299,8 @@ class DuplicateFeatures:
     behavioral_node_count: int | None = None
     data_shape_node_count: int | None = None
     static_binding_node_count: int | None = None
+    scaffolding_node_count: int | None = None
+    substantive_node_count: int | None = None
 
 
 def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
@@ -248,6 +316,8 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         behavioral_node_count,
         data_shape_node_count,
         static_binding_node_count,
+        scaffolding_node_count,
+        substantive_node_count,
     ) = ast
     if code_bearing_node_count < _MIN_CODE_BEARING_NODES:
         ast_type_ngrams = None
@@ -260,6 +330,8 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         behavioral_node_count=behavioral_node_count,
         data_shape_node_count=data_shape_node_count,
         static_binding_node_count=static_binding_node_count,
+        scaffolding_node_count=scaffolding_node_count,
+        substantive_node_count=substantive_node_count,
     )
 
 
@@ -268,6 +340,7 @@ def duplicate_features_are_eligible(
     *,
     min_code_bearing_nodes: int = _MIN_CODE_BEARING_NODES,
     include_data: bool = False,
+    include_scaffolding: bool = False,
 ) -> bool:
     """Return whether a chunk has enough parser-visible code to scan for duplicates."""
     if features.code_bearing_node_count is None:
@@ -276,6 +349,8 @@ def duplicate_features_are_eligible(
         return False
     if not include_data and _is_static_data_features(features):
         return False
+    if not include_scaffolding and _is_scaffolding_features(features):
+        return False
     return True
 
 
@@ -283,6 +358,17 @@ def _is_static_data_features(features: DuplicateFeatures) -> bool:
     """Return whether parser-backed features look like literal/container data."""
     return features.behavioral_node_count == 0 and bool(
         features.data_shape_node_count or features.static_binding_node_count
+    )
+
+
+def _is_scaffolding_features(features: DuplicateFeatures) -> bool:
+    """Return whether parser-backed features look like imports/headers/attributes only."""
+    return (
+        features.behavioral_node_count == 0
+        and features.data_shape_node_count == 0
+        and features.static_binding_node_count == 0
+        and bool(features.scaffolding_node_count)
+        and features.substantive_node_count == 0
     )
 
 
@@ -398,11 +484,11 @@ def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[
     features = _ast_features(content, language)
     if features is None:
         return None
-    type_ngrams, shape_edges, _, _, _, _ = features
+    type_ngrams, shape_edges, _, _, _, _, _, _ = features
     return type_ngrams, shape_edges
 
 
-def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str], int, int, int, int] | None:
+def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str], int, int, int, int, int, int] | None:
     parser_language = _parser_language_for_chunk(language)
     if parser_language is None:
         return None
@@ -418,9 +504,14 @@ def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str
 
     labels: list[str] = []
     shape_edges: set[str] = set()
-    code_bearing_node_count, behavioral_node_count, data_shape_node_count, static_binding_node_count = (
-        _collect_ast_sequences(tree.root_node, labels, shape_edges)
-    )
+    (
+        code_bearing_node_count,
+        behavioral_node_count,
+        data_shape_node_count,
+        static_binding_node_count,
+        scaffolding_node_count,
+        substantive_node_count,
+    ) = _collect_ast_sequences(tree.root_node, labels, shape_edges)
     type_ngrams = _ngrams(labels, size=_NGRAM_SIZE)
     return (
         type_ngrams,
@@ -429,6 +520,8 @@ def _ast_features(content: str, language: str | None) -> tuple[set[str], set[str
         behavioral_node_count,
         data_shape_node_count,
         static_binding_node_count,
+        scaffolding_node_count,
+        substantive_node_count,
     )
 
 
@@ -437,14 +530,16 @@ def _collect_ast_sequences(
     labels: list[str],
     shape_edges: set[str],
     parent_label: str | None = None,
-) -> tuple[int, int, int, int]:
+) -> tuple[int, int, int, int, int, int]:
     if _is_ignored_ast_subtree(node.type):
-        return 0, 0, 0, 0
+        return 0, 0, 0, 0, 0, 0
 
     code_bearing_node_count = 0
     behavioral_node_count = 0
     data_shape_node_count = 0
     static_binding_node_count = 0
+    scaffolding_node_count = 0
+    substantive_node_count = 0
     child_parent = parent_label
     if node.is_named and node.type != "ERROR":
         label = _normalize_ast_label(node.type)
@@ -456,19 +551,37 @@ def _collect_ast_sequences(
             data_shape_node_count += 1
         if _is_static_binding_ast_node(node.type):
             static_binding_node_count += 1
+        if _is_scaffolding_ast_node(node.type):
+            scaffolding_node_count += 1
+        if _is_substantive_ast_node(node.type):
+            substantive_node_count += 1
         if parent_label is not None:
             shape_edges.add(f"{parent_label}>{label}")
         child_parent = label
 
     for child in node.children:
-        child_code, child_behavioral, child_data_shape, child_static_binding = _collect_ast_sequences(
-            child, labels, shape_edges, child_parent
-        )
+        (
+            child_code,
+            child_behavioral,
+            child_data_shape,
+            child_static_binding,
+            child_scaffolding,
+            child_substantive,
+        ) = _collect_ast_sequences(child, labels, shape_edges, child_parent)
         code_bearing_node_count += child_code
         behavioral_node_count += child_behavioral
         data_shape_node_count += child_data_shape
         static_binding_node_count += child_static_binding
-    return code_bearing_node_count, behavioral_node_count, data_shape_node_count, static_binding_node_count
+        scaffolding_node_count += child_scaffolding
+        substantive_node_count += child_substantive
+    return (
+        code_bearing_node_count,
+        behavioral_node_count,
+        data_shape_node_count,
+        static_binding_node_count,
+        scaffolding_node_count,
+        substantive_node_count,
+    )
 
 
 def _is_ignored_ast_subtree(node_type: str) -> bool:
@@ -489,6 +602,38 @@ def _is_data_shape_ast_node(node_type: str) -> bool:
 
 def _is_static_binding_ast_node(node_type: str) -> bool:
     return node_type.lower() in _STATIC_BINDING_NODE_TYPES
+
+
+def _is_scaffolding_ast_node(node_type: str) -> bool:
+    lower = node_type.lower()
+    tokens = _ast_node_tokens(lower)
+    if lower in _SCAFFOLDING_NODE_TYPES:
+        return True
+    if any(token in {"import", "namespace", "package"} for token in tokens):
+        return True
+    if "annotation" in tokens and "declaration" not in tokens:
+        return True
+    if "attribute" in tokens and "declaration" not in tokens:
+        return True
+    return False
+
+
+def _is_substantive_ast_node(node_type: str) -> bool:
+    lower = node_type.lower()
+    if _is_scaffolding_ast_node(lower):
+        return False
+    if _is_name_ast_node(lower):
+        return False
+    return lower not in _NON_SUBSTANTIVE_NODE_TYPES
+
+
+def _is_name_ast_node(node_type: str) -> bool:
+    lower = node_type.lower()
+    return (
+        lower in _IDENTIFIER_NODE_TYPES
+        or lower.endswith("identifier")
+        or lower in {"dotted_name", "name", "namespace_name", "qualified_name", "scoped_identifier"}
+    )
 
 
 def _ast_node_tokens(node_type: str) -> list[str]:

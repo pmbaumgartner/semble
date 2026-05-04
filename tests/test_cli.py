@@ -132,6 +132,7 @@ def test_cli_find_duplicates_maps_options(
             "src/generated",
             "--include-tests",
             "--include-data",
+            "--include-scaffolding",
             "--min-lines",
             "4",
             "--min-score",
@@ -155,6 +156,7 @@ def test_cli_find_duplicates_maps_options(
         exclude_paths=["tests", "src/generated"],
         include_tests=True,
         include_data=True,
+        include_scaffolding=True,
         min_lines=4,
         min_score=0.25,
     )
@@ -189,6 +191,7 @@ def test_cli_find_duplicates_empty_state(
         exclude_paths=None,
         include_tests=False,
         include_data=False,
+        include_scaffolding=False,
         min_lines=8,
         min_score=0.0,
     )

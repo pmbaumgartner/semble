@@ -165,10 +165,11 @@ semble find-duplicates ./my-project --language python
 semble find-duplicates ./my-project --candidate-k 24
 semble find-duplicates ./my-project --include-tests
 semble find-duplicates ./my-project --include-data
+semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery excludes tests and static data/config chunks by default; pass `--include-tests` or `--include-data` to include them.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery excludes tests, static data/config chunks, and scaffolding-only chunks by default; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include them.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -216,11 +217,14 @@ semble find-duplicates ./my-project --include-tests
 # Include static data/config chunks in duplicate discovery
 semble find-duplicates ./my-project --include-data
 
+# Include import/header/attribute scaffolding chunks in duplicate discovery
+semble find-duplicates ./my-project --include-scaffolding
+
 # Exclude tests and generated code from duplicate discovery
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery excludes tests and static data/config chunks by default.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery excludes tests, static data/config chunks, and scaffolding-only chunks by default.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 

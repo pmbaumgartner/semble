@@ -85,6 +85,7 @@ async def _find_duplicate_code(
     language: str | None,
     include_tests: bool,
     include_data: bool,
+    include_scaffolding: bool,
     min_lines: int,
     min_score: float,
 ) -> str:
@@ -101,6 +102,7 @@ async def _find_duplicate_code(
         filter_languages=[language] if language else None,
         include_tests=include_tests,
         include_data=include_data,
+        include_scaffolding=include_scaffolding,
         min_lines=min_lines,
         min_score=min_score,
     )
@@ -171,6 +173,10 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             bool,
             Field(description="Include static data/config chunks in duplicate discovery."),
         ] = False,
+        include_scaffolding: Annotated[
+            bool,
+            Field(description="Include import/header/attribute scaffolding chunks in duplicate discovery."),
+        ] = False,
         min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
         min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,
     ) -> str:
@@ -187,6 +193,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             language,
             include_tests,
             include_data,
+            include_scaffolding,
             min_lines,
             min_score,
         )

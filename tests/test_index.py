@@ -505,6 +505,7 @@ VALUES = [
     )
 
     assert index.find_duplicates(min_lines=1) == []
+    assert index.find_duplicates(min_lines=1, include_scaffolding=True) == []
     assert len(index.find_duplicates(min_lines=1, include_data=True)) == 1
 
 
@@ -528,6 +529,25 @@ SHORT_DATE_FORMAT = "j M Y"
 
     assert index.find_duplicates(min_lines=1) == []
     assert len(index.find_duplicates(min_lines=1, include_data=True)) == 1
+
+
+def test_find_duplicates_excludes_scaffolding_chunks_by_default() -> None:
+    """Import/header/attribute scaffolding chunks are skipped unless include_scaffolding=True."""
+    rust_feature_probe = duplicate_features(_chunk("#![allow(clippy::too_many_lines)]", "src/lib.rs", language="rust"))
+    if rust_feature_probe.code_bearing_node_count is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    content = "#![allow(clippy::too_many_lines, clippy::missing_errors_doc)]\n"
+    index = _duplicate_index(
+        [
+            _chunk(content, "src/a.rs", language="rust"),
+            _chunk(content, "src/b.rs", language="rust"),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+    assert index.find_duplicates(min_lines=1, include_data=True) == []
+    assert len(index.find_duplicates(min_lines=1, include_scaffolding=True)) == 1
 
 
 def test_find_duplicates_keeps_declaration_only_chunks_without_static_bindings() -> None:

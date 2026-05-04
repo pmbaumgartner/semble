@@ -255,6 +255,88 @@ SHORT_DATE_FORMAT = "j M Y"
     assert duplicate_features_are_eligible(config, include_data=True)
 
 
+def test_duplicate_features_detect_scaffolding_chunks_when_parser_is_available() -> None:
+    """Import/header/attribute scaffolding chunks are ineligible by default and opt-in eligible."""
+    if duplicates._parser_for_language("rust") is None or duplicates._parser_for_language("java") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    rust_attributes = duplicate_features(
+        Chunk(
+            "#![allow(clippy::too_many_lines, clippy::missing_errors_doc)]\n",
+            "lib.rs",
+            1,
+            1,
+            "rust",
+        )
+    )
+    java_imports = duplicate_features(
+        Chunk(
+            """\
+package org.junit.jupiter.api.condition;
+
+import static org.apiguardian.api.API.Status.MAINTAINED;
+import java.lang.annotation.Documented;
+import org.apiguardian.api.API;
+""",
+            "Example.java",
+            1,
+            5,
+            "java",
+        )
+    )
+    behavior = duplicate_features(
+        Chunk(
+            """\
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+""",
+            "lib.rs",
+            1,
+            3,
+            "rust",
+        )
+    )
+
+    assert rust_attributes.scaffolding_node_count
+    assert rust_attributes.substantive_node_count == 0
+    assert not duplicate_features_are_eligible(rust_attributes)
+    assert duplicate_features_are_eligible(rust_attributes, include_scaffolding=True)
+    assert java_imports.scaffolding_node_count
+    assert java_imports.substantive_node_count == 0
+    assert not duplicate_features_are_eligible(java_imports)
+    assert duplicate_features_are_eligible(java_imports, include_scaffolding=True)
+    assert behavior.behavioral_node_count
+    assert duplicate_features_are_eligible(behavior)
+
+
+def test_duplicate_features_keep_declarations_with_scaffolding_when_parser_is_available() -> None:
+    """Declarations remain eligible even when they have scaffolding annotations."""
+    if duplicates._parser_for_language("java") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    declaration = duplicate_features(
+        Chunk(
+            """\
+@Documented
+@Retention(RetentionPolicy.RUNTIME)
+public @interface DisabledOnJre {
+    JRE[] value();
+}
+""",
+            "DisabledOnJre.java",
+            1,
+            5,
+            "java",
+        )
+    )
+
+    assert declaration.behavioral_node_count == 0
+    assert declaration.scaffolding_node_count
+    assert declaration.substantive_node_count
+    assert duplicate_features_are_eligible(declaration)
+
+
 def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing parser support leaves AST signals unavailable and keeps token scoring."""
     monkeypatch.setattr(duplicates, "_parser_for_language", lambda language: None)
