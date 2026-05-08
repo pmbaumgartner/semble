@@ -30,13 +30,14 @@ dependencies = [
     "vicinity>=0.4.4",
     "numpy>=1.24.0",
     "bm25s>=0.2.0",
-    "chonkie[code]==1.6.2",
+    "chonkie[code]!=1.6.3",
     "pathspec>=0.12",
 ]
 
 [project.optional-dependencies]
 mcp = [
-    "mcp>=1.0",
+    "mcp>=1.0,<2.0",
+    "watchfiles>=0.21",
 ]
 benchmark = [
     "sentence-transformers>=3.0",
@@ -139,3 +140,7 @@ relative_files = true
 [tool.coverage.report]
 skip_covered = true
 exclude_also = ["if __name__ == .__main__.:", "@abstractmethod"]
+
+[tool.uv]
+exclude-newer = "2026-04-28T05:34:18.12564Z"
+constraint-dependencies = ["tree-sitter-language-pack!=1.6.3"] # no MacOS wheels

@@ -157,6 +157,7 @@ def test_cli_find_duplicates_maps_options(
         include_paths=("src", "lib"),
         exclude_paths=("tests", "src/generated"),
         include_tests=True,
+        include_text_files=False,
     )
     fake_index.find_duplicates.assert_called_once_with(
         options=DuplicateOptions(
@@ -196,6 +197,7 @@ def test_cli_find_duplicates_empty_state(
         include_paths=None,
         exclude_paths=None,
         include_tests=False,
+        include_text_files=False,
     )
     fake_index.find_duplicates.assert_called_once_with(options=DuplicateOptions())
     assert "No duplicate clusters found." in capsys.readouterr().out
@@ -217,6 +219,7 @@ def test_cli_find_duplicates_uses_git_url(
         include_paths=None,
         exclude_paths=None,
         include_tests=False,
+        include_text_files=False,
     )
     assert "No duplicate clusters found." in capsys.readouterr().out
 
@@ -321,6 +324,18 @@ def test_cli_entrypoint_works_without_mcp_installed(
         else:
             main()
     assert expected_stdout in capsys.readouterr().out
+
+
+def test_mcp_main_exits_with_message_when_extras_missing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """_mcp_main prints an actionable message and exits when mcp extras are not installed."""
+    monkeypatch.setattr(sys, "argv", ["semble"])
+    with patch("semble.cli.find_spec", return_value=None):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+    assert exc_info.value.code == 1
+    assert "pip install 'semble[mcp]'" in capsys.readouterr().err
 
 
 def test_agent_file_tools_are_bash_only() -> None:

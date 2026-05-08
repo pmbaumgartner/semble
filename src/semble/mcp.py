@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections import OrderedDict
 from pathlib import Path
 from typing import Annotated, Literal
 
+import watchfiles
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
@@ -13,8 +16,10 @@ from semble.index.dense import load_model
 from semble.types import Encoder
 from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
 
+logger = logging.getLogger(__name__)
+
 _REPO_DESCRIPTION = (
-    "Git URL (e.g. https://github.com/org/repo) or local path to index and search. "
+    "https:// or http:// git URL (e.g. https://github.com/org/repo) or local directory path to index and search. "
     "Required when no default index was configured at startup. "
     "The index is cached after the first call, so repeat queries are fast."
 )
@@ -23,6 +28,28 @@ _NO_REPO_MESSAGE = (
     "No repo specified and no default index. "
     "Pass a git URL (https://github.com/...) or local path as `repo`."
 )
+
+_CACHE_MAX_SIZE = 10  # Max number of cached indexes to keep in memory
+
+
+async def _get_index(
+    repo: str | None,
+    default_source: str | None,
+    cache: _IndexCache,
+) -> SembleIndex:
+    """Return a cached index for a repo, rejecting unsafe git transport schemes."""
+    if repo is not None and _is_git_url(repo) and not repo.startswith(("https://", "http://")):
+        raise ValueError(f"Only https://, http://, or local directory paths are accepted as `repo`. Got: {repo!r}")
+    source = repo or default_source
+    if not source:
+        raise ValueError(
+            "No repo specified and no default index. "
+            "Pass an https:// or http:// git URL or local directory path as `repo`."
+        )
+    try:
+        return await cache.get(source)
+    except Exception as exc:
+        raise ValueError(f"Failed to index {source!r}: {exc}") from exc
 
 
 async def _get_index_or_error(
@@ -33,6 +60,8 @@ async def _get_index_or_error(
     """Return an index for source, or a user-facing MCP error message."""
     if not source:
         return None, _NO_REPO_MESSAGE
+    if _is_git_url(source) and not source.startswith(("https://", "http://")):
+        return None, f"Only https://, http://, or local directory paths are accepted as `repo`. Got: {source!r}"
     try:
         return await cache.get(source, ref=ref), None
     except Exception as exc:
@@ -150,11 +179,11 @@ def create_server(
     server = FastMCP(
         "semble",
         instructions=(
-            "Instant code search for any local or GitHub repository. "
+            "Instant code search for any local or remote git repository. "
             "Call `search` to find relevant code; call `find_related` on a result to discover similar code elsewhere. "
             "Call `find_duplicates` to identify grouped duplicate implementations and refactoring candidates. "
-            "For questions about a library (e.g. a PyPI/npm package), resolve the GitHub URL from your training "
-            "knowledge and pass it as `repo`. "
+            "When working in a local project, pass the project root as `repo`. "
+            "For remote repos, pass an explicit https:// URL. Never guess or infer URLs. "
             "Prefer these tools over Grep, Glob, or Read for any question about how code works."
         ),
     )
@@ -261,12 +290,14 @@ def create_server(
     return server
 
 
-async def serve(path: str | None = None, ref: str | None = None) -> None:
+async def serve(path: str | None = None, ref: str | None = None, include_text_files: bool = False) -> None:
     """Start an MCP stdio server, optionally pre-indexing a default source."""
     model = await asyncio.to_thread(load_model)
-    cache = _IndexCache(model=model)
+    cache = _IndexCache(model=model, include_text_files=include_text_files)
     if path:
         await cache.get(path, ref=ref)
+        if not _is_git_url(path):
+            await cache.start_watcher(path)
 
     server = create_server(cache, default_source=path, default_ref=ref)
     await server.run_stdio_async()
@@ -275,33 +306,71 @@ async def serve(path: str | None = None, ref: str | None = None) -> None:
 class _IndexCache:
     """Cache of indexed repos and local paths for the lifetime of the MCP server process."""
 
-    def __init__(self, model: Encoder) -> None:
+    def __init__(self, model: Encoder, include_text_files: bool = False) -> None:
         """Initialise an empty cache with a shared embedding model."""
         self._model = model
-        self._tasks: dict[str, asyncio.Task[SembleIndex]] = {}
+        self._include_text_files = include_text_files
+        self._tasks: OrderedDict[str, asyncio.Task[SembleIndex]] = OrderedDict()  # ordered for LRU eviction
+        self._watcher_task: asyncio.Task[None] | None = None
+
+    def _compute_cache_key(self, source: str, ref: str | None = None) -> str:
+        """Compute the canonical cache key for a source."""
+        is_git = _is_git_url(source)
+        return (f"{source}@{ref}" if ref else source) if is_git else str(Path(source).resolve())
+
+    def evict(self, source: str) -> None:
+        self._tasks.pop(self._compute_cache_key(source), None)
+
+    async def start_watcher(self, path: str) -> None:
+        """Start a background task that re-indexes the path whenever files change."""
+        self._watcher_task = asyncio.create_task(self._watch_loop(path))
+
+    async def _watch_loop(self, path: str) -> None:
+        """Watch the given path for changes and evict the cache entry on changes."""
+        try:
+            async for _ in watchfiles.awatch(path):
+                self.evict(path)
+                try:
+                    await self.get(path)
+                except Exception:
+                    logger.warning("Failed to rebuild index for %r after file change", path, exc_info=True)
+        except Exception:
+            pass
 
     async def get(self, source: str, ref: str | None = None) -> SembleIndex:
         """Return an index for the requested source, building and caching it on first access."""
-        is_git = _is_git_url(source)
-        cache_key = (f"{source}@{ref}" if ref else source) if is_git else str(Path(source).resolve())
+        cache_key = self._compute_cache_key(source, ref)
 
-        if cache_key not in self._tasks:
-            if is_git:
+        if cache_key in self._tasks:
+            self._tasks.move_to_end(cache_key)
+        else:
+            if len(self._tasks) >= _CACHE_MAX_SIZE:
+                self._tasks.popitem(last=False)
+            if _is_git_url(source):
                 self._tasks[cache_key] = asyncio.create_task(
-                    asyncio.to_thread(SembleIndex.from_git, source, ref=ref, model=self._model)
+                    asyncio.to_thread(
+                        SembleIndex.from_git,
+                        source,
+                        ref=ref,
+                        model=self._model,
+                        include_text_files=self._include_text_files,
+                    )
                 )
             else:
                 self._tasks[cache_key] = asyncio.create_task(
-                    asyncio.to_thread(SembleIndex.from_path, cache_key, model=self._model)
+                    asyncio.to_thread(
+                        SembleIndex.from_path, cache_key, model=self._model, include_text_files=self._include_text_files
+                    )
                 )
         task = self._tasks[cache_key]
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:  # pragma: no cover
             if task.done():
-                self._tasks.pop(cache_key, None)
+                self.evict(source)
             raise
         except Exception:
-            # Build failed: evict so the next caller can retry.
-            self._tasks.pop(cache_key, None)
+            # Only evict if this task hasn't already been replaced by evict()+get().
+            if self._tasks.get(cache_key) is task:
+                self.evict(source)
             raise

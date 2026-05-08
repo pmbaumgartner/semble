@@ -3,7 +3,10 @@ import asyncio
 import sys
 from collections.abc import Sequence
 from importlib.resources import files
+from importlib.util import find_spec
 from pathlib import Path
+
+from model2vec.utils import get_package_extras
 
 from semble.duplicates.search import duplicate_options_from_values
 from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateOptions, SembleIndex
@@ -34,10 +37,18 @@ def _mcp_main() -> None:
         help="Local directory or git URL to pre-index at startup (optional).",
     )
     parser.add_argument("--ref", default=None, help="Branch or tag to check out (git URLs only).")
+    parser.add_argument(
+        "--include-text-files",
+        action="store_true",
+        help="Also index non-code text files (.md, .yaml, .json, etc.).",
+    )
     args = parser.parse_args()
+    if any(find_spec(dep) is None for dep in get_package_extras("semble", "mcp")):
+        print("MCP dependencies are not installed. Run: pip install 'semble[mcp]'", file=sys.stderr)
+        raise SystemExit(1)
     from semble.mcp import serve
 
-    asyncio.run(serve(args.path, ref=args.ref))
+    asyncio.run(serve(args.path, ref=args.ref, include_text_files=args.include_text_files))
 
 
 def _run_init(*, force: bool = False) -> None:
@@ -64,6 +75,11 @@ def build_cli_parser() -> argparse.ArgumentParser:
     search_p.add_argument(
         "-m", "--mode", default="hybrid", choices=["hybrid", "semantic", "bm25"], help="Search mode (default: hybrid)."
     )
+    search_p.add_argument(
+        "--include-text-files",
+        action="store_true",
+        help="Also index non-code text files (.md, .yaml, .json, etc.).",
+    )
     search_p.set_defaults(handler=run_search)
 
     related_p = sub.add_parser("find-related", help="Find code similar to a specific location.")
@@ -71,6 +87,11 @@ def build_cli_parser() -> argparse.ArgumentParser:
     related_p.add_argument("line", type=int, help="Line number (1-indexed).")
     related_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
     related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
+    related_p.add_argument(
+        "--include-text-files",
+        action="store_true",
+        help="Also index non-code text files (.md, .yaml, .json, etc.).",
+    )
     related_p.set_defaults(handler=run_find_related)
 
     duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code clusters.")
@@ -95,6 +116,11 @@ def build_cli_parser() -> argparse.ArgumentParser:
         "--include-scaffolding",
         action="store_true",
         help="Include import/header/attribute scaffolding chunks in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-text-files",
+        action="store_true",
+        help="Also index non-code text files (.md, .yaml, .json, etc.).",
     )
     duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
     duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
@@ -172,18 +198,21 @@ def _load_index(
     exclude_paths: Sequence[str] | None = None,
     include_tests: bool = True,
 ) -> SembleIndex:
+    include_text_files = getattr(args, "include_text_files", False)
     if _is_git_url(args.path):
         return SembleIndex.from_git(
             args.path,
             include_paths=include_paths,
             exclude_paths=exclude_paths,
             include_tests=include_tests,
+            include_text_files=include_text_files,
         )
     return SembleIndex.from_path(
         args.path,
         include_paths=include_paths,
         exclude_paths=exclude_paths,
         include_tests=include_tests,
+        include_text_files=include_text_files,
     )
 
 

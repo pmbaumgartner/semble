@@ -11,7 +11,7 @@ import semble.duplicates.search as duplicate_search
 from semble import SembleIndex
 from semble.duplicates.scoring import duplicate_features
 from semble.duplicates.search import DuplicateOptions, duplicate_options_from_values, find_duplicate_pairs
-from semble.index.create import create_index_from_path
+from semble.index.create import _MAX_FILE_BYTES, create_index_from_path
 from semble.index.dense import SelectableBasicBackend
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
 
@@ -100,6 +100,13 @@ def test_index_filters_duplicate_discovery_paths_up_front(mock_model: Encoder, t
 def test_index_empty_returns_zero_chunks(mock_model: Encoder, tmp_path: Path) -> None:
     """Indexing an empty directory yields zero files and chunks."""
     with pytest.raises(ValueError):
+        create_index_from_path(tmp_path, mock_model)
+
+
+def test_oversized_file_is_skipped(mock_model: Encoder, tmp_path: Path) -> None:
+    """Files exceeding _MAX_FILE_BYTES are silently skipped during indexing."""
+    (tmp_path / "big.py").write_bytes(b"x" * (_MAX_FILE_BYTES + 1))
+    with pytest.raises(ValueError):  # no indexable content remains
         create_index_from_path(tmp_path, mock_model)
 
 

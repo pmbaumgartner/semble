@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from collections import defaultdict
@@ -56,6 +57,8 @@ _DEFAULT_DUPLICATE_EXCLUDE_PATHS = _DuplicateOptionDefault(None)
 _DEFAULT_DUPLICATE_INCLUDE_TESTS = _DuplicateOptionDefault(False)
 _DEFAULT_DUPLICATE_INCLUDE_DATA = _DuplicateOptionDefault(False)
 _DEFAULT_DUPLICATE_INCLUDE_SCAFFOLDING = _DuplicateOptionDefault(False)
+
+_GIT_CLONE_TIMEOUT = int(os.environ.get("SEMBLE_CLONE_TIMEOUT", 60))
 
 
 class SembleIndex:
@@ -183,15 +186,19 @@ class SembleIndex:
             True; duplicate discovery still skips test-looking chunks unless
             ``find_duplicates(include_tests=True)`` is passed.
         :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
-        :raises RuntimeError: If git is not on PATH or the clone fails.
+        :raises RuntimeError: If git is not on PATH, the clone fails, or times out.
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
             # `--` prevents `url` from being interpreted as a git option (e.g. `--upload-pack=...`).
             cmd = ["git", "clone", "--depth", "1", *(["--branch", ref] if ref else []), "--", url, tmp_dir]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=_GIT_CLONE_TIMEOUT
+                )
             except FileNotFoundError:
                 raise RuntimeError("git is not installed or not on PATH") from None
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(f"git clone timed out for {url!r} (limit: {_GIT_CLONE_TIMEOUT} s)") from None
             if result.returncode != 0:
                 raise RuntimeError(f"git clone failed for {url!r}:\n{result.stderr.strip()}")
             model = model or load_model()
