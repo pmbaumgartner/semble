@@ -1,9 +1,9 @@
-from semble.types import DuplicateCluster, DuplicateResult, DuplicateSignals
+from semble.types import DuplicateCluster, DuplicatePair, DuplicateSignals
 from semble.utils import _format_duplicate_clusters
 from tests.conftest import make_chunk
 
 
-def _duplicate_result(*, ast_signals: bool = False) -> DuplicateResult:
+def _duplicate_result(*, ast_signals: bool = False) -> DuplicatePair:
     left = make_chunk("def left():\n    return 1", "src/left.py")
     right = make_chunk("def right():\n    return 1", "src/right.py")
     signals = DuplicateSignals(
@@ -13,7 +13,7 @@ def _duplicate_result(*, ast_signals: bool = False) -> DuplicateResult:
         ast_type_jaccard=0.6 if ast_signals else None,
         ast_shape_jaccard=0.5 if ast_signals else None,
     )
-    return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+    return DuplicatePair(left=left, right=right, score=0.84, signals=signals)
 
 
 def _duplicate_cluster(*, extra_pair: bool = False) -> DuplicateCluster:
@@ -22,7 +22,7 @@ def _duplicate_cluster(*, extra_pair: bool = False) -> DuplicateCluster:
     members = (result.left, result.right)
     if extra_pair:
         third = make_chunk("def third():\n    return 1", "src/third.py")
-        extra = DuplicateResult(left=result.right, right=third, score=0.75, signals=result.signals)
+        extra = DuplicatePair(left=result.right, right=third, score=0.75, signals=result.signals)
         pairs = (result, extra)
         members = (result.left, result.right, third)
     return DuplicateCluster(members=members, pairs=pairs)

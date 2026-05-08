@@ -5,6 +5,7 @@ import tempfile
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import numpy.typing as npt
@@ -13,7 +14,7 @@ from bm25s import BM25
 from semble.duplicates.clustering import cluster_duplicate_pairs
 from semble.duplicates.search import (
     DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-    DuplicateSearchOptions,
+    DuplicateOptions,
     duplicate_options_from_values,
     find_duplicate_pairs,
 )
@@ -22,6 +23,39 @@ from semble.index.dense import SelectableBasicBackend, load_model
 from semble.path_filters import PathFilter
 from semble.search import search_bm25, search_hybrid, search_semantic
 from semble.types import Chunk, DuplicateCluster, Encoder, IndexStats, SearchMode, SearchResult
+
+
+class _DuplicateOptionDefault:
+    """Sentinel wrapper that displays like the public default value."""
+
+    def __init__(self, value: object) -> None:
+        """Store the public default value for omitted keyword detection."""
+        self.value = value
+
+    def __repr__(self) -> str:
+        """Return the public default representation for introspection."""
+        return repr(self.value)
+
+
+def _duplicate_option_value(value: object) -> object:
+    """Return the public default value for an omitted duplicate option keyword."""
+    if isinstance(value, _DuplicateOptionDefault):
+        return value.value
+    return value
+
+
+_DEFAULT_DUPLICATE_TOP_K = _DuplicateOptionDefault(5)
+_DEFAULT_DUPLICATE_CANDIDATE_K = _DuplicateOptionDefault(12)
+_DEFAULT_DUPLICATE_MIN_LINES = _DuplicateOptionDefault(8)
+_DEFAULT_DUPLICATE_MIN_SCORE = _DuplicateOptionDefault(0.0)
+_DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = _DuplicateOptionDefault(DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE)
+_DEFAULT_DUPLICATE_MIN_CLUSTER_SIZE = _DuplicateOptionDefault(2)
+_DEFAULT_DUPLICATE_FILTER_LANGUAGES = _DuplicateOptionDefault(None)
+_DEFAULT_DUPLICATE_INCLUDE_PATHS = _DuplicateOptionDefault(None)
+_DEFAULT_DUPLICATE_EXCLUDE_PATHS = _DuplicateOptionDefault(None)
+_DEFAULT_DUPLICATE_INCLUDE_TESTS = _DuplicateOptionDefault(False)
+_DEFAULT_DUPLICATE_INCLUDE_DATA = _DuplicateOptionDefault(False)
+_DEFAULT_DUPLICATE_INCLUDE_SCAFFOLDING = _DuplicateOptionDefault(False)
 
 
 class SembleIndex:
@@ -198,22 +232,24 @@ class SembleIndex:
     def find_duplicates(
         self,
         *,
-        options: DuplicateSearchOptions | None = None,
-        top_k: int = 5,
-        candidate_k: int = 12,
-        min_lines: int = 8,
-        min_score: float = 0.0,
-        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-        min_cluster_size: int = 2,
-        filter_languages: list[str] | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-        include_tests: bool = False,
-        include_data: bool = False,
-        include_scaffolding: bool = False,
+        options: DuplicateOptions | None = None,
+        top_k: int = cast(int, _DEFAULT_DUPLICATE_TOP_K),
+        candidate_k: int = cast(int, _DEFAULT_DUPLICATE_CANDIDATE_K),
+        min_lines: int = cast(int, _DEFAULT_DUPLICATE_MIN_LINES),
+        min_score: float = cast(float, _DEFAULT_DUPLICATE_MIN_SCORE),
+        min_structural_score: float = cast(float, _DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE),
+        min_cluster_size: int = cast(int, _DEFAULT_DUPLICATE_MIN_CLUSTER_SIZE),
+        filter_languages: Sequence[str] | None = cast(Sequence[str] | None, _DEFAULT_DUPLICATE_FILTER_LANGUAGES),
+        include_paths: Sequence[str] | None = cast(Sequence[str] | None, _DEFAULT_DUPLICATE_INCLUDE_PATHS),
+        exclude_paths: Sequence[str] | None = cast(Sequence[str] | None, _DEFAULT_DUPLICATE_EXCLUDE_PATHS),
+        include_tests: bool = cast(bool, _DEFAULT_DUPLICATE_INCLUDE_TESTS),
+        include_data: bool = cast(bool, _DEFAULT_DUPLICATE_INCLUDE_DATA),
+        include_scaffolding: bool = cast(bool, _DEFAULT_DUPLICATE_INCLUDE_SCAFFOLDING),
     ) -> list[DuplicateCluster]:
         """Return ranked duplicate-code clusters from indexed chunks.
 
+        :param options: Optional pre-built duplicate discovery options. Do not combine
+            this with duplicate option keyword arguments.
         :param top_k: Number of duplicate clusters to return.
         :param candidate_k: Number of semantic neighbors to inspect per eligible chunk.
         :param min_lines: Minimum content line count required for each side.
@@ -229,21 +265,44 @@ class SembleIndex:
         :param include_data: Whether static data/config chunks are eligible duplicate candidates.
         :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
         :return: Ranked list of duplicate clusters, best match first.
+        :raises ValueError: If `options` is combined with duplicate option keyword arguments.
         """
-        search_options = options or duplicate_options_from_values(
-            top_k=top_k,
-            candidate_k=candidate_k,
-            min_lines=min_lines,
-            min_score=min_score,
-            min_structural_score=min_structural_score,
-            min_cluster_size=min_cluster_size,
-            filter_languages=filter_languages,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            include_tests=include_tests,
-            include_data=include_data,
-            include_scaffolding=include_scaffolding,
-        )
+        duplicate_kwargs = {
+            "top_k": top_k,
+            "candidate_k": candidate_k,
+            "min_lines": min_lines,
+            "min_score": min_score,
+            "min_structural_score": min_structural_score,
+            "min_cluster_size": min_cluster_size,
+            "filter_languages": filter_languages,
+            "include_paths": include_paths,
+            "exclude_paths": exclude_paths,
+            "include_tests": include_tests,
+            "include_data": include_data,
+            "include_scaffolding": include_scaffolding,
+        }
+        if options is not None:
+            mixed = [
+                name for name, value in duplicate_kwargs.items() if not isinstance(value, _DuplicateOptionDefault)
+            ]
+            if mixed:
+                raise ValueError("Pass either options or duplicate option keyword arguments, not both.")
+            search_options = options
+        else:
+            search_options = duplicate_options_from_values(
+                top_k=cast(int, _duplicate_option_value(top_k)),
+                candidate_k=cast(int, _duplicate_option_value(candidate_k)),
+                min_lines=cast(int, _duplicate_option_value(min_lines)),
+                min_score=cast(float, _duplicate_option_value(min_score)),
+                min_structural_score=cast(float, _duplicate_option_value(min_structural_score)),
+                min_cluster_size=cast(int, _duplicate_option_value(min_cluster_size)),
+                filter_languages=cast(Sequence[str] | None, _duplicate_option_value(filter_languages)),
+                include_paths=cast(Sequence[str] | None, _duplicate_option_value(include_paths)),
+                exclude_paths=cast(Sequence[str] | None, _duplicate_option_value(exclude_paths)),
+                include_tests=cast(bool, _duplicate_option_value(include_tests)),
+                include_data=cast(bool, _duplicate_option_value(include_data)),
+                include_scaffolding=cast(bool, _duplicate_option_value(include_scaffolding)),
+            )
         if search_options.top_k <= 0:
             return []
 

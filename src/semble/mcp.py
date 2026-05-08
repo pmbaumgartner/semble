@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from semble.duplicates import duplicate_options_from_values
+from semble.duplicates.search import duplicate_options_from_values
 from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder

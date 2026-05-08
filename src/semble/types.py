@@ -62,7 +62,7 @@ class DuplicateSignals:
 
 
 @dataclass(frozen=True, slots=True)
-class DuplicateResult:
+class DuplicatePair:
     """A duplicate candidate pair with its final ranking score."""
 
     left: Chunk
@@ -76,7 +76,7 @@ class DuplicateCluster:
     """A connected group of duplicate candidate pairs."""
 
     members: tuple[Chunk, ...]
-    pairs: tuple[DuplicateResult, ...]
+    pairs: tuple[DuplicatePair, ...]
 
     @property
     def score(self) -> float:

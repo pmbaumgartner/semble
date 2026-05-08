@@ -5,19 +5,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from semble import DuplicateSearchOptions
+from semble import DuplicateOptions
 from semble.cli import _CLAUDE_FILE_PATH, _cli_main, _run_init, main
-from semble.types import DuplicateCluster, DuplicateResult, DuplicateSignals, SearchMode, SearchResult
+from semble.types import DuplicateCluster, DuplicatePair, DuplicateSignals, SearchMode, SearchResult
 from tests.conftest import make_chunk
 
 _CLAUDE_AGENT_FILE = files("semble").joinpath("agents/semble-search.md").read_text(encoding="utf-8")
 
 
-def _duplicate_result() -> DuplicateResult:
+def _duplicate_result() -> DuplicatePair:
     left = make_chunk("def left():\n    return 1", "src/left.py")
     right = make_chunk("def right():\n    return 1", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
-    return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+    return DuplicatePair(left=left, right=right, score=0.84, signals=signals)
 
 
 def _duplicate_cluster() -> DuplicateCluster:
@@ -159,7 +159,7 @@ def test_cli_find_duplicates_maps_options(
         include_tests=True,
     )
     fake_index.find_duplicates.assert_called_once_with(
-        options=DuplicateSearchOptions(
+        options=DuplicateOptions(
             top_k=7,
             candidate_k=19,
             filter_languages=["python"],
@@ -197,7 +197,7 @@ def test_cli_find_duplicates_empty_state(
         exclude_paths=None,
         include_tests=False,
     )
-    fake_index.find_duplicates.assert_called_once_with(options=DuplicateSearchOptions())
+    fake_index.find_duplicates.assert_called_once_with(options=DuplicateOptions())
     assert "No duplicate clusters found." in capsys.readouterr().out
 
 

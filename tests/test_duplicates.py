@@ -1,15 +1,9 @@
 import pytest
 
-import semble._duplicates as duplicates
+import semble.duplicates as duplicate_exports
 import semble.duplicates.ast as duplicate_ast
-from semble import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateCluster, DuplicateResult, DuplicateSignals
-from semble._duplicates import (
-    _jaccard,
-    _normalize_ast_label,
-    _pair_key,
-    _parser_language_for_chunk,
-    _same_file_ranges_overlap,
-    _weighted_structural_score,
+from semble import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateCluster, DuplicatePair, DuplicateSignals
+from semble.duplicates import (
     cluster_duplicate_pairs,
     duplicate_features,
     duplicate_features_are_eligible,
@@ -17,6 +11,19 @@ from semble._duplicates import (
     score_duplicate_features,
     score_duplicate_pair,
 )
+from semble.duplicates.ast import (
+    _normalize_ast_label,
+    _parser_for_language,
+    _parser_language_for_chunk,
+)
+from semble.duplicates.clustering import (
+    _pair_key,
+    _same_file_ranges_overlap,
+)
+from semble.duplicates.scoring import (
+    _weighted_structural_score,
+)
+from semble.duplicates.tokens import _jaccard
 from semble.types import Chunk
 from tests.conftest import make_chunk
 
@@ -28,10 +35,10 @@ def _duplicate_result(
     score: float = 0.9,
     semantic_score: float | None = None,
     structural_score: float | None = None,
-) -> DuplicateResult:
+) -> DuplicatePair:
     semantic_score = score if semantic_score is None else semantic_score
     structural_score = score if structural_score is None else structural_score
-    return DuplicateResult(
+    return DuplicatePair(
         left=left,
         right=right,
         score=score,
@@ -48,7 +55,7 @@ def test_duplicate_types_are_exported() -> None:
     left = make_chunk("def left():\n    return 1", "left.py")
     right = make_chunk("def right():\n    return 1", "right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.8)
-    result = DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+    result = DuplicatePair(left=left, right=right, score=0.84, signals=signals)
     cluster = DuplicateCluster(members=(left, right), pairs=(result,))
 
     assert result.left is left
@@ -58,6 +65,13 @@ def test_duplicate_types_are_exported() -> None:
     assert cluster.pairs == (result,)
     assert cluster.score == result.score
     assert DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE == 0.4
+
+
+def test_duplicate_package_star_exports_exclude_private_helpers() -> None:
+    """The duplicate package star export only includes stable public names."""
+    assert "_jaccard" not in duplicate_exports.__all__
+    assert "_pair_key" not in duplicate_exports.__all__
+    assert all(not name.startswith("_") for name in duplicate_exports.__all__)
 
 
 def test_score_duplicate_pair_ranks_renamed_code_above_unrelated_code() -> None:
@@ -115,7 +129,7 @@ def test_empty_or_comment_only_fingerprints_are_not_perfect_matches() -> None:
 
 def test_score_duplicate_pair_populates_ast_signals_when_parser_is_available() -> None:
     """Parser-backed chunks include AST type and shape signals."""
-    if duplicates._parser_for_language("python") is None:
+    if _parser_for_language("python") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     left = make_chunk(
@@ -149,7 +163,7 @@ def invoice_amount(products):
 
 def test_structural_score_uses_weighted_ast_blend_when_available() -> None:
     """Structural score blends token, AST type, and AST shape signals."""
-    if duplicates._parser_for_language("python") is None:
+    if _parser_for_language("python") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     left = make_chunk(
@@ -203,7 +217,7 @@ def test_score_duplicate_features_reuses_precomputed_features() -> None:
 
 def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_available() -> None:
     """Comment/string-only chunks are ineligible when parser-backed AST counting is available."""
-    if duplicates._parser_for_language("python") is None:
+    if _parser_for_language("python") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     docstring = duplicate_features(make_chunk('"""Only documentation."""', "docs.py"))
@@ -221,7 +235,7 @@ def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_availabl
 
 def test_duplicate_features_detect_static_data_chunks_when_parser_is_available() -> None:
     """Literal/container data chunks are ineligible by default and opt-in eligible."""
-    if duplicates._parser_for_language("python") is None:
+    if _parser_for_language("python") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     data = duplicate_features(
@@ -261,7 +275,7 @@ def total(items):
 
 def test_duplicate_features_detect_scalar_config_assignments_when_parser_is_available() -> None:
     """Scalar assignment-only config chunks are static data even without containers."""
-    if duplicates._parser_for_language("python") is None:
+    if _parser_for_language("python") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     config = duplicate_features(
@@ -286,7 +300,7 @@ SHORT_DATE_FORMAT = "j M Y"
 
 def test_duplicate_features_detect_scaffolding_chunks_when_parser_is_available() -> None:
     """Import/header/attribute scaffolding chunks are ineligible by default and opt-in eligible."""
-    if duplicates._parser_for_language("rust") is None or duplicates._parser_for_language("java") is None:
+    if _parser_for_language("rust") is None or _parser_for_language("java") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     rust_attributes = duplicate_features(
@@ -341,7 +355,7 @@ fn add(a: i32, b: i32) -> i32 {
 
 def test_duplicate_features_keep_declarations_with_scaffolding_when_parser_is_available() -> None:
     """Declarations remain eligible even when they have scaffolding annotations."""
-    if duplicates._parser_for_language("java") is None:
+    if _parser_for_language("java") is None:
         pytest.skip("tree_sitter_language_pack is not available")
 
     declaration = duplicate_features(

@@ -9,11 +9,11 @@ from vicinity.backends.basic import BasicArgs
 
 import semble.duplicates.search as duplicate_search
 from semble import SembleIndex
-from semble._duplicates import duplicate_features
-from semble.duplicates.search import DuplicateSearchOptions, find_duplicate_pairs
+from semble.duplicates.scoring import duplicate_features
+from semble.duplicates.search import DuplicateOptions, duplicate_options_from_values, find_duplicate_pairs
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend
-from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder
+from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
 
 
 @pytest.fixture
@@ -226,7 +226,7 @@ class Renderer:
     assert len(results) == 1
     assert isinstance(results[0], DuplicateCluster)
     assert _cluster_paths(results[0]) == {"src/prices.py", "src/invoices.py"}
-    assert isinstance(results[0].pairs[0], DuplicateResult)
+    assert isinstance(results[0].pairs[0], DuplicatePair)
 
 
 def test_find_duplicate_pairs_helper_returns_unsliced_sorted_pairs() -> None:
@@ -250,7 +250,7 @@ def total(items):
         index.chunks,
         index._semantic_index,
         index._language_mapping,
-        DuplicateSearchOptions(
+        DuplicateOptions(
             candidate_k=12,
             min_lines=1,
             min_score=0.0,
@@ -269,6 +269,43 @@ def total(items):
     assert len(clusters) == 1
     assert clusters[0].pairs == tuple(all_pairs)
     assert all_pairs == sorted(all_pairs, key=duplicate_search._duplicate_sort_key)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"top_k": -1}, "top_k"),
+        ({"candidate_k": 0}, "candidate_k"),
+        ({"min_lines": 0}, "min_lines"),
+        ({"min_score": -0.1}, "min_score"),
+        ({"min_score": 1.1}, "min_score"),
+        ({"min_structural_score": 1.1}, "min_structural_score"),
+        ({"min_cluster_size": 1}, "min_cluster_size"),
+    ],
+)
+def test_duplicate_options_validate_public_thresholds(kwargs: dict[str, object], message: str) -> None:
+    """Invalid duplicate option thresholds fail at construction time."""
+    with pytest.raises(ValueError, match=message):
+        DuplicateOptions(**kwargs)
+
+
+def test_duplicate_options_reject_singular_and_plural_language_filters() -> None:
+    """CLI-style language and API-style filter_languages cannot both be supplied."""
+    with pytest.raises(ValueError, match="language or filter_languages"):
+        duplicate_options_from_values(language="python", filter_languages=["javascript"])
+
+
+def test_find_duplicates_rejects_options_mixed_with_kwargs() -> None:
+    """find_duplicates has one options-object style and one keyword style."""
+    index = _duplicate_index(
+        [
+            _chunk("def add(a, b):\n    return a + b", "src/a.py"),
+            _chunk("def add(a, b):\n    return a + b", "src/b.py"),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="either options or duplicate option keyword"):
+        index.find_duplicates(options=DuplicateOptions(min_lines=1), top_k=1)
 
 
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
@@ -501,7 +538,8 @@ def add(a, b):
 
     assert index.find_duplicates(min_lines=3) == []
     assert len(index.find_duplicates(min_lines=1, min_score=1.0)) == 1
-    assert index.find_duplicates(min_lines=1, min_score=1.01) == []
+    with pytest.raises(ValueError, match="min_score"):
+        index.find_duplicates(min_lines=1, min_score=1.01)
     assert index.find_duplicates(min_lines=1, min_cluster_size=3) == []
 
 

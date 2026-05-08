@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from semble.types import Chunk, DuplicateCluster, DuplicateResult, SearchResult
+from semble.types import Chunk, DuplicateCluster, DuplicatePair, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
@@ -77,7 +77,7 @@ def _format_duplicate_search_result(clusters: list[DuplicateCluster]) -> str:
     return _format_duplicate_clusters("Duplicate clusters", clusters)
 
 
-def _duplicate_signal_parts(result: DuplicateResult) -> list[str]:
+def _duplicate_signal_parts(result: DuplicatePair) -> list[str]:
     """Return compact duplicate signal labels."""
     signals = result.signals
     parts = [

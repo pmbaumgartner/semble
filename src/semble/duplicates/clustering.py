@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from semble.types import Chunk, DuplicateCluster, DuplicateResult
+from semble.types import Chunk, DuplicateCluster, DuplicatePair
 
 
 def cluster_duplicate_pairs(
-    pairs: list[DuplicateResult],
+    pairs: list[DuplicatePair],
     *,
     min_cluster_size: int = 2,
 ) -> list[DuplicateCluster]:
@@ -76,7 +76,7 @@ def _pair_key(left: Chunk, right: Chunk) -> tuple[tuple[str, int, int], tuple[st
 
 
 def _duplicate_pair_sort_key(
-    pair: DuplicateResult,
+    pair: DuplicatePair,
 ) -> tuple[float, float, float, tuple[tuple[str, int, int], tuple[str, int, int]]]:
     return (
         -pair.score,

@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from semble import DuplicateSearchOptions
+from semble import DuplicateOptions
 from semble.mcp import _IndexCache, create_server, serve
-from semble.types import Chunk, DuplicateCluster, DuplicateResult, DuplicateSignals, Encoder, SearchMode, SearchResult
+from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder, SearchMode, SearchResult
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
 from tests.conftest import make_chunk
 
@@ -43,12 +43,12 @@ def cache() -> _IndexCache:
     return _IndexCache(model=MagicMock(spec=Encoder))
 
 
-def _duplicate_result() -> DuplicateResult:
+def _duplicate_result() -> DuplicatePair:
     """Return a representative duplicate result for MCP tests."""
     left = make_chunk("def left():\n    return 1", "src/left.py")
     right = make_chunk("def right():\n    return 1", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
-    return DuplicateResult(left=left, right=right, score=0.84, signals=signals)
+    return DuplicatePair(left=left, right=right, score=0.84, signals=signals)
 
 
 def _duplicate_cluster() -> DuplicateCluster:
@@ -307,7 +307,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
     mock_get.assert_awaited_once_with("/some/path", ref=None)
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
-        options=DuplicateSearchOptions(
+        options=DuplicateOptions(
             top_k=7,
             candidate_k=19,
             filter_languages=["python"],

@@ -17,13 +17,13 @@ from semble.duplicates.scoring import (
     score_duplicate_features,
 )
 from semble.path_filters import PathFilter
-from semble.types import Chunk, DuplicateResult
+from semble.types import Chunk, DuplicatePair
 
 DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class DuplicateSearchOptions:
+class DuplicateOptions:
     """Normalized options for duplicate-code discovery."""
 
     top_k: int
@@ -56,6 +56,12 @@ class DuplicateSearchOptions:
         include_scaffolding: bool = False,
     ) -> None:
         """Create normalized duplicate discovery options."""
+        _validate_at_least("top_k", top_k, 0)
+        _validate_at_least("candidate_k", candidate_k, 1)
+        _validate_at_least("min_lines", min_lines, 1)
+        _validate_score("min_score", min_score)
+        _validate_score("min_structural_score", min_structural_score)
+        _validate_at_least("min_cluster_size", min_cluster_size, 2)
         object.__setattr__(self, "top_k", top_k)
         object.__setattr__(self, "candidate_k", candidate_k)
         object.__setattr__(self, "min_lines", min_lines)
@@ -85,9 +91,11 @@ def duplicate_options_from_values(
     min_score: float = 0.0,
     min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
     min_cluster_size: int = 2,
-) -> DuplicateSearchOptions:
+) -> DuplicateOptions:
     """Build normalized duplicate search options from CLI/MCP-style values."""
-    return DuplicateSearchOptions(
+    if language is not None and filter_languages is not None:
+        raise ValueError("Use either language or filter_languages, not both.")
+    return DuplicateOptions(
         top_k=top_k,
         candidate_k=candidate_k,
         filter_languages=[language] if language else filter_languages,
@@ -107,8 +115,8 @@ def find_duplicate_pairs(
     chunks: Sequence[Chunk],
     semantic_index: Any,
     language_mapping: Mapping[str, Sequence[int]],
-    options: DuplicateSearchOptions,
-) -> list[DuplicateResult]:
+    options: DuplicateOptions,
+) -> list[DuplicatePair]:
     """Return all sorted duplicate candidate pairs without top-k slicing."""
     if not chunks:
         return []
@@ -118,7 +126,7 @@ def find_duplicate_pairs(
         return []
 
     candidate_k = max(options.candidate_k, 1)
-    pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult] = {}
+    pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicatePair] = {}
     vectors = np.asarray(semantic_index.vectors)
 
     for group in _duplicate_language_groups(chunks, eligible).values():
@@ -143,10 +151,22 @@ def _tuple_or_none(values: Sequence[str] | None) -> tuple[str, ...] | None:
     return tuple(values)
 
 
+def _validate_at_least(name: str, value: int, minimum: int) -> None:
+    """Validate that an integer option is at least a minimum value."""
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}.")
+
+
+def _validate_score(name: str, value: float) -> None:
+    """Validate that a score threshold is in the inclusive 0..1 range."""
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be between 0.0 and 1.0.")
+
+
 def _eligible_duplicate_features(
     chunks: Sequence[Chunk],
     language_mapping: Mapping[str, Sequence[int]],
-    options: DuplicateSearchOptions,
+    options: DuplicateOptions,
 ) -> tuple[dict[int, DuplicateFeatures], list[int]]:
     """Return duplicate features and indices for chunks that pass cheap eligibility gates."""
     features_by_index: dict[int, DuplicateFeatures] = {}
@@ -197,7 +217,7 @@ def _collect_duplicate_pairs_for_group(
     candidate_k: int,
     min_score: float,
     min_structural_score: float,
-    pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
+    pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicatePair],
 ) -> None:
     """Collect duplicate pairs from one same-language candidate group."""
     if len(group) < 2:
@@ -233,7 +253,7 @@ def _maybe_add_duplicate_pair(
     features_by_index: dict[int, DuplicateFeatures],
     min_score: float,
     min_structural_score: float,
-    pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicateResult],
+    pairs: dict[tuple[tuple[str, int, int], tuple[str, int, int]], DuplicatePair],
 ) -> None:
     """Score and record one duplicate pair if it passes pair-level gates."""
     if right_index == left_index:
@@ -256,7 +276,7 @@ def _maybe_add_duplicate_pair(
         return
 
     result_left, result_right = _ordered_duplicate_pair(left, right)
-    duplicate = DuplicateResult(left=result_left, right=result_right, score=score, signals=signals)
+    duplicate = DuplicatePair(left=result_left, right=result_right, score=score, signals=signals)
     pair_key = _pair_key(left, right)
     existing = pairs.get(pair_key)
     if existing is None or _duplicate_rank_key(duplicate) > _duplicate_rank_key(existing):
@@ -283,12 +303,12 @@ def _ordered_duplicate_pair(left: Chunk, right: Chunk) -> tuple[Chunk, Chunk]:
     return (left, right) if left_key <= right_key else (right, left)
 
 
-def _duplicate_rank_key(result: DuplicateResult) -> tuple[float, float, float]:
+def _duplicate_rank_key(result: DuplicatePair) -> tuple[float, float, float]:
     """Return the descending score key used to keep the best version of a pair."""
     return (result.score, result.signals.semantic_score, result.signals.structural_score)
 
 
-def _duplicate_sort_key(result: DuplicateResult) -> tuple[float, float, float, str, str]:
+def _duplicate_sort_key(result: DuplicatePair) -> tuple[float, float, float, str, str]:
     """Return the final deterministic duplicate result sort key."""
     return (
         -result.score,

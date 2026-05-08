@@ -5,8 +5,8 @@ from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
 
-from semble.duplicates import duplicate_options_from_values
-from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateSearchOptions, SembleIndex
+from semble.duplicates.search import duplicate_options_from_values
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateOptions, SembleIndex
 from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
@@ -187,7 +187,7 @@ def _load_index(
     )
 
 
-def _duplicate_options_from_args(args: argparse.Namespace) -> DuplicateSearchOptions:
+def _duplicate_options_from_args(args: argparse.Namespace) -> DuplicateOptions:
     return duplicate_options_from_values(
         top_k=args.top_k,
         candidate_k=args.candidate_k,
