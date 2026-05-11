@@ -143,4 +143,4 @@ skip_covered = true
 exclude_also = ["if __name__ == .__main__.:", "@abstractmethod"]
 
 [tool.uv]
-exclude-newer = "2026-05-04T09:49:57Z"
+exclude-newer = "1 week"
