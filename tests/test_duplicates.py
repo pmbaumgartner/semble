@@ -2,7 +2,13 @@ import pytest
 
 import semble.duplicates as duplicate_exports
 import semble.duplicates.ast as duplicate_ast
-from semble import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateCluster, DuplicatePair, DuplicateSignals
+from semble import (
+    DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+    DuplicateCluster,
+    DuplicateMatch,
+    DuplicatePair,
+    DuplicateSignals,
+)
 from semble.duplicates import (
     cluster_duplicate_pairs,
     duplicate_features,
@@ -39,8 +45,8 @@ def _duplicate_result(
     semantic_score = score if semantic_score is None else semantic_score
     structural_score = score if structural_score is None else structural_score
     return DuplicatePair(
-        left=left,
-        right=right,
+        left=DuplicateMatch(chunk=left, content=left.content),
+        right=DuplicateMatch(chunk=right, content=right.content),
         score=score,
         signals=DuplicateSignals(
             semantic_score=semantic_score,
@@ -55,11 +61,17 @@ def test_duplicate_types_are_exported() -> None:
     left = make_chunk("def left():\n    return 1", "left.py")
     right = make_chunk("def right():\n    return 1", "right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.8)
-    result = DuplicatePair(left=left, right=right, score=0.84, signals=signals)
+    left_match = DuplicateMatch(chunk=left, content=left.content)
+    right_match = DuplicateMatch(chunk=right, content=right.content)
+    result = DuplicatePair(left=left_match, right=right_match, score=0.84, signals=signals)
     cluster = DuplicateCluster(members=(left, right), pairs=(result,))
 
-    assert result.left is left
-    assert result.right is right
+    assert result.left is left_match
+    assert result.right is right_match
+    assert result.left.chunk is left
+    assert result.right.chunk is right
+    assert result.left.content == left.content
+    assert result.right.content == right.content
     assert result.signals is signals
     assert cluster.members == (left, right)
     assert cluster.pairs == (result,)
@@ -378,6 +390,39 @@ public @interface DisabledOnJre {
     assert declaration.scaffolding_node_count
     assert declaration.substantive_node_count
     assert duplicate_features_are_eligible(declaration)
+
+
+def test_duplicate_features_strip_scaffolding_from_mixed_chunks_when_requested() -> None:
+    """Mixed chunks can be scored without import/header scaffolding."""
+    if _parser_for_language("python") is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    content = """\
+import alpha
+import beta
+import gamma
+import delta
+import epsilon
+import zeta
+
+def build_user():
+    return alpha.load_user()
+"""
+    chunk = Chunk(content, "example.py", 1, len(content.splitlines()), "python")
+
+    full = duplicate_features(chunk, include_scaffolding=True)
+    stripped = duplicate_features(chunk, include_scaffolding=False)
+
+    assert full.effective_line_count == 8
+    assert stripped.effective_line_count == 2
+    assert any("import" in ngram for ngram in full.token_ngrams)
+    assert not any("import" in ngram for ngram in stripped.token_ngrams)
+    assert full.ast_type_ngrams is not None
+    assert stripped.ast_type_ngrams is not None
+    assert any("import_statement" in ngram for ngram in full.ast_type_ngrams)
+    assert not any("import_statement" in ngram for ngram in stripped.ast_type_ngrams)
+    assert full.code_bearing_node_count and stripped.code_bearing_node_count
+    assert stripped.code_bearing_node_count < full.code_bearing_node_count
 
 
 def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:

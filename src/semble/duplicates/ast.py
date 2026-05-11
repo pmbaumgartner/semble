@@ -169,6 +169,38 @@ _SCAFFOLDING_NODE_TYPES = frozenset(
         "using_directive",
     }
 )
+_STRIPPABLE_SCAFFOLDING_NODE_TYPES = frozenset(
+    {
+        "annotation",
+        "annotation_argument_list",
+        "attribute_group",
+        "attribute_item",
+        "attribute_list",
+        "decorator",
+        "import_declaration",
+        "import_from_statement",
+        "import_statement",
+        "inner_attribute_item",
+        "marker_annotation",
+        "namespace_use_clause",
+        "namespace_use_declaration",
+        "package_clause",
+        "package_declaration",
+        "php_tag",
+        "scoped_use_list",
+        "use_declaration",
+        "use_list",
+        "using_declaration",
+        "using_directive",
+    }
+)
+_TRANSPARENT_SCAFFOLDING_NODE_TYPES = frozenset(
+    {
+        "export_statement",
+        "namespace_declaration",
+        "namespace_definition",
+    }
+)
 _NON_SUBSTANTIVE_NODE_TYPES = frozenset(
     {
         "annotation_type_body",
@@ -234,6 +266,7 @@ class AstDuplicateFeatures:
     type_ngrams: set[str]
     shape_edges: set[str]
     stats: AstStats
+    scored_content: str
 
 
 def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[str]] | None:
@@ -243,11 +276,21 @@ def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[
     return features.type_ngrams, features.shape_edges
 
 
-def _ast_features(content: str, language: str | None) -> AstDuplicateFeatures | None:
-    return _build_ast_features(content, language)
+def _ast_features(
+    content: str,
+    language: str | None,
+    *,
+    include_scaffolding: bool = True,
+) -> AstDuplicateFeatures | None:
+    return _build_ast_features(content, language, include_scaffolding=include_scaffolding)
 
 
-def _build_ast_features(content: str, language: str | None) -> AstDuplicateFeatures | None:
+def _build_ast_features(
+    content: str,
+    language: str | None,
+    *,
+    include_scaffolding: bool,
+) -> AstDuplicateFeatures | None:
     parser_language = _parser_language_for_chunk(language)
     if parser_language is None:
         return None
@@ -263,11 +306,13 @@ def _build_ast_features(content: str, language: str | None) -> AstDuplicateFeatu
 
     labels: list[str] = []
     shape_edges: set[str] = set()
-    stats = _collect_ast_sequences(tree.root_node, labels, shape_edges)
+    stats = _collect_ast_sequences(tree.root_node, labels, shape_edges, include_scaffolding=include_scaffolding)
+    scored_content = content if include_scaffolding else _strip_scaffolding_content(content, tree.root_node)
     return AstDuplicateFeatures(
         type_ngrams=_ngrams(labels, size=_NGRAM_SIZE),
         shape_edges=shape_edges,
         stats=stats,
+        scored_content=scored_content,
     )
 
 
@@ -276,13 +321,18 @@ def _collect_ast_sequences(
     labels: list[str],
     shape_edges: set[str],
     parent_label: str | None = None,
+    *,
+    include_scaffolding: bool = True,
 ) -> AstStats:
     if _is_ignored_ast_subtree(node.type):
+        return AstStats()
+    if not include_scaffolding and _is_strippable_scaffolding_node(node.type):
         return AstStats()
 
     stats = AstStats()
     child_parent = parent_label
-    if node.is_named and node.type != "ERROR":
+    is_transparent_scaffolding = not include_scaffolding and _is_transparent_scaffolding_node(node.type)
+    if node.is_named and node.type != "ERROR" and not is_transparent_scaffolding:
         label = _normalize_ast_label(node.type)
         labels.append(label)
         stats = _stats_for_node(node.type)
@@ -291,8 +341,66 @@ def _collect_ast_sequences(
         child_parent = label
 
     for child in node.children:
-        stats += _collect_ast_sequences(child, labels, shape_edges, child_parent)
+        stats += _collect_ast_sequences(
+            child,
+            labels,
+            shape_edges,
+            child_parent,
+            include_scaffolding=include_scaffolding,
+        )
     return stats
+
+
+def _strip_scaffolding_content(content: str, root: Any) -> str:
+    source = content.encode("utf-8", errors="ignore")
+    ranges = _scaffolding_removal_ranges(source, root)
+    if not ranges:
+        return content
+
+    stripped = bytearray()
+    cursor = 0
+    for start, end in _merge_ranges(ranges):
+        stripped.extend(source[cursor:start])
+        cursor = end
+    stripped.extend(source[cursor:])
+    return stripped.decode("utf-8", errors="ignore")
+
+
+def _scaffolding_removal_ranges(source: bytes, node: Any) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    _collect_scaffolding_removal_ranges(source, node, ranges)
+    return ranges
+
+
+def _collect_scaffolding_removal_ranges(source: bytes, node: Any, ranges: list[tuple[int, int]]) -> None:
+    if _is_strippable_scaffolding_node(node.type):
+        ranges.append(_expand_removal_range(source, node.start_byte, node.end_byte))
+        return
+    for child in node.children:
+        _collect_scaffolding_removal_ranges(source, child, ranges)
+
+
+def _expand_removal_range(source: bytes, start: int, end: int) -> tuple[int, int]:
+    line_start = source.rfind(b"\n", 0, start) + 1
+    line_end = source.find(b"\n", end)
+    if line_end == -1:
+        line_end = len(source)
+    else:
+        line_end += 1
+
+    if not source[line_start:start].strip() and not source[end:line_end].strip():
+        return line_start, line_end
+    return start, end
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
 
 
 def _stats_for_node(node_type: str) -> AstStats:
@@ -338,6 +446,14 @@ def _is_scaffolding_ast_node(node_type: str) -> bool:
     if "attribute" in tokens and "declaration" not in tokens:
         return True
     return False
+
+
+def _is_strippable_scaffolding_node(node_type: str) -> bool:
+    return node_type.lower() in _STRIPPABLE_SCAFFOLDING_NODE_TYPES
+
+
+def _is_transparent_scaffolding_node(node_type: str) -> bool:
+    return node_type.lower() in _TRANSPARENT_SCAFFOLDING_NODE_TYPES
 
 
 def _is_substantive_ast_node(node_type: str) -> bool:

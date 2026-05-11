@@ -252,7 +252,7 @@ def create_server(
         ] = False,
         include_scaffolding: Annotated[
             bool,
-            Field(description="Include import/header/attribute scaffolding chunks in duplicate discovery."),
+            Field(description="Include import/header/attribute scaffolding in duplicate discovery."),
         ] = False,
         min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
         min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,

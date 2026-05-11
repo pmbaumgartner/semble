@@ -6,7 +6,16 @@ import pytest
 
 from semble import DuplicateOptions
 from semble.mcp import _CACHE_MAX_SIZE, _IndexCache, create_server, serve
-from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder, SearchMode, SearchResult
+from semble.types import (
+    Chunk,
+    DuplicateCluster,
+    DuplicateMatch,
+    DuplicatePair,
+    DuplicateSignals,
+    Encoder,
+    SearchMode,
+    SearchResult,
+)
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
 from tests.conftest import make_chunk
 
@@ -48,13 +57,18 @@ def _duplicate_result() -> DuplicatePair:
     left = make_chunk("def left():\n    return 1", "src/left.py")
     right = make_chunk("def right():\n    return 1", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
-    return DuplicatePair(left=left, right=right, score=0.84, signals=signals)
+    return DuplicatePair(
+        left=DuplicateMatch(chunk=left, content=left.content),
+        right=DuplicateMatch(chunk=right, content=right.content),
+        score=0.84,
+        signals=signals,
+    )
 
 
 def _duplicate_cluster() -> DuplicateCluster:
     """Return a representative duplicate cluster for MCP tests."""
     result = _duplicate_result()
-    return DuplicateCluster(members=(result.left, result.right), pairs=(result,))
+    return DuplicateCluster(members=(result.left.chunk, result.right.chunk), pairs=(result,))
 
 
 def test_resolve_chunk() -> None:

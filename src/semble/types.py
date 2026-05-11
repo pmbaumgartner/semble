@@ -69,11 +69,44 @@ class DuplicateSignals:
 
 
 @dataclass(frozen=True, slots=True)
+class DuplicateMatch:
+    """A duplicate candidate side with original source identity and scored content."""
+
+    chunk: Chunk
+    content: str
+
+    @property
+    def file_path(self) -> str:
+        """Original indexed file path."""
+        return self.chunk.file_path
+
+    @property
+    def start_line(self) -> int:
+        """Original indexed start line."""
+        return self.chunk.start_line
+
+    @property
+    def end_line(self) -> int:
+        """Original indexed end line."""
+        return self.chunk.end_line
+
+    @property
+    def language(self) -> str | None:
+        """Original indexed language."""
+        return self.chunk.language
+
+    @property
+    def location(self) -> str:
+        """Original file path and line range as a string."""
+        return self.chunk.location
+
+
+@dataclass(frozen=True, slots=True)
 class DuplicatePair:
     """A duplicate candidate pair with its final ranking score."""
 
-    left: Chunk
-    right: Chunk
+    left: DuplicateMatch
+    right: DuplicateMatch
     score: float
     signals: DuplicateSignals
 

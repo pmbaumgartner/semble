@@ -125,7 +125,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     duplicates_p.add_argument(
         "--include-scaffolding",
         action="store_true",
-        help="Include import/header/attribute scaffolding chunks in duplicate discovery.",
+        help="Include import/header/attribute scaffolding in duplicate discovery.",
     )
     duplicates_p.add_argument(
         "--include-text-files",

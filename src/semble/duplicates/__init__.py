@@ -12,10 +12,12 @@ from semble.duplicates.search import (
     DuplicateOptions,
     find_duplicate_pairs,
 )
+from semble.types import DuplicateMatch
 
 __all__ = [
     "DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE",
     "DuplicateFeatures",
+    "DuplicateMatch",
     "DuplicateOptions",
     "cluster_duplicate_pairs",
     "duplicate_features",

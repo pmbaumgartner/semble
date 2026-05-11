@@ -2,6 +2,7 @@ from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateOption
 from semble.types import (
     Chunk,
     DuplicateCluster,
+    DuplicateMatch,
     DuplicatePair,
     DuplicateSignals,
     EmbeddingMatrix,
@@ -16,6 +17,7 @@ __all__ = [
     "Chunk",
     "DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE",
     "DuplicateCluster",
+    "DuplicateMatch",
     "DuplicatePair",
     "DuplicateOptions",
     "DuplicateSignals",

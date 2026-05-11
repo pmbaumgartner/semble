@@ -267,7 +267,7 @@ class SembleIndex:
             This is independent of indexing; tests may be present in the index but are
             skipped here by default.
         :param include_data: Whether static data/config chunks are eligible duplicate candidates.
-        :param include_scaffolding: Whether scaffolding-only chunks are eligible duplicate candidates.
+        :param include_scaffolding: Whether import/header/attribute scaffolding contributes to duplicate discovery.
         :return: Ranked list of duplicate clusters, best match first.
         :raises ValueError: If `options` is combined with duplicate option keyword arguments.
         """

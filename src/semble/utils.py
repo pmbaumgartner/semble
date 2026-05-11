@@ -69,10 +69,10 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
         if unlisted_pairs:
             lines.append(f"Pairs not shown: {unlisted_pairs}")
         lines.append("")
-        lines.append("Strongest pair left:")
+        lines.append("Strongest match left:")
         _append_fenced_block(lines, strongest.left.content)
         lines.append("")
-        lines.append("Strongest pair right:")
+        lines.append("Strongest match right:")
         _append_fenced_block(lines, strongest.right.content)
         lines.append("")
     return "\n".join(lines)

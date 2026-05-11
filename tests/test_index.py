@@ -709,6 +709,87 @@ def test_find_duplicates_excludes_scaffolding_chunks_by_default() -> None:
     assert len(index.find_duplicates(min_lines=1, include_scaffolding=True)) == 1
 
 
+def test_find_duplicates_strips_scaffolding_from_mixed_chunks_by_default() -> None:
+    """Repeated imports do not make unrelated mixed chunks duplicate candidates by default."""
+    parser_probe = duplicate_features(_chunk("import os\n\ndef f():\n    return os.getcwd()", "src/a.py"))
+    if parser_probe.code_bearing_node_count is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    left = """\
+import alpha
+import beta
+import gamma
+import delta
+import epsilon
+import zeta
+
+def build_user():
+    return alpha.load_user()
+"""
+    right = """\
+import alpha
+import beta
+import gamma
+import delta
+import epsilon
+import zeta
+
+def send_email(message):
+    beta.dispatch(message)
+"""
+    index = _duplicate_index(
+        [
+            _chunk(left, "src/a.py"),
+            _chunk(right, "src/b.py"),
+        ]
+    )
+
+    assert index.find_duplicates(min_lines=1) == []
+    scaffold_clusters = index.find_duplicates(min_lines=1, include_scaffolding=True)
+    assert len(scaffold_clusters) == 1
+    scaffold_pair = scaffold_clusters[0].pairs[0]
+    assert "import alpha" in scaffold_pair.left.content
+    assert "import alpha" in scaffold_pair.right.content
+
+
+def test_find_duplicates_keeps_substantive_duplicates_with_scaffolding_stripped() -> None:
+    """Mixed chunks still match when their substantive bodies are duplicates."""
+    parser_probe = duplicate_features(_chunk("import os\n\ndef f():\n    return os.getcwd()", "src/a.py"))
+    if parser_probe.code_bearing_node_count is None:
+        pytest.skip("tree_sitter_language_pack is not available")
+
+    left = """\
+import alpha
+import beta
+
+def normalize_user(user):
+    return user.strip().lower()
+"""
+    right = """\
+import alpha
+import beta
+
+def normalize_email(email):
+    return email.strip().lower()
+"""
+    index = _duplicate_index(
+        [
+            _chunk(left, "src/a.py"),
+            _chunk(right, "src/b.py"),
+        ]
+    )
+
+    clusters = index.find_duplicates(min_lines=1)
+    assert len(clusters) == 1
+    pair = clusters[0].pairs[0]
+    assert "import alpha" in pair.left.chunk.content
+    assert "import alpha" in pair.right.chunk.content
+    assert "import alpha" not in pair.left.content
+    assert "import alpha" not in pair.right.content
+    assert "def normalize_user" in pair.left.content
+    assert "def normalize_email" in pair.right.content
+
+
 def test_find_duplicates_keeps_declaration_only_chunks_without_static_bindings() -> None:
     """Declaration-only chunks are not treated as static data without binding/data-shape nodes."""
     if duplicate_features(_chunk("class User:\n    pass", "src/user.py")).code_bearing_node_count is None:

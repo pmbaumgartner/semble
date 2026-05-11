@@ -25,13 +25,19 @@ class DuplicateFeatures:
     static_binding_node_count: int | None = None
     scaffolding_node_count: int | None = None
     substantive_node_count: int | None = None
+    effective_line_count: int = 0
+    scored_content: str = ""
 
 
-def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
+def duplicate_features(chunk: Chunk, *, include_scaffolding: bool = True) -> DuplicateFeatures:
     """Precompute duplicate-scoring features for a chunk."""
-    ast = _ast_features(chunk.content, chunk.language)
+    ast = _ast_features(chunk.content, chunk.language, include_scaffolding=include_scaffolding)
     if ast is None:
-        return DuplicateFeatures(token_ngrams=_token_ngrams(chunk.content))
+        return DuplicateFeatures(
+            token_ngrams=_token_ngrams(chunk.content),
+            effective_line_count=_effective_line_count(chunk.content),
+            scored_content=chunk.content,
+        )
 
     ast_type_ngrams: set[str] | None = ast.type_ngrams
     ast_shape_edges: set[str] | None = ast.shape_edges
@@ -39,7 +45,7 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         ast_type_ngrams = None
         ast_shape_edges = None
     return DuplicateFeatures(
-        token_ngrams=_token_ngrams(chunk.content),
+        token_ngrams=_token_ngrams(ast.scored_content),
         ast_type_ngrams=ast_type_ngrams,
         ast_shape_edges=ast_shape_edges,
         code_bearing_node_count=ast.stats.code_bearing,
@@ -48,6 +54,8 @@ def duplicate_features(chunk: Chunk) -> DuplicateFeatures:
         static_binding_node_count=ast.stats.static_binding,
         scaffolding_node_count=ast.stats.scaffolding,
         substantive_node_count=ast.stats.substantive,
+        effective_line_count=_effective_line_count(ast.scored_content),
+        scored_content=ast.scored_content,
     )
 
 
@@ -86,6 +94,10 @@ def _is_scaffolding_features(features: DuplicateFeatures) -> bool:
         and bool(features.scaffolding_node_count)
         and features.substantive_node_count == 0
     )
+
+
+def _effective_line_count(content: str) -> int:
+    return sum(1 for line in content.splitlines() if line.strip())
 
 
 def score_duplicate_features(

@@ -187,7 +187,7 @@ semble find-duplicates ./my-project --min-cluster-size 3
 semble find-duplicates ./my-project --include-tests
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips tests, static data/config, and scaffolding-only chunks by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include` to narrow duplicate discovery to one or more file/directory scopes. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when duplicates in tests, fixtures/config, or boilerplate matter.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips tests, static data/config, and import/header scaffolding by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include` to narrow duplicate discovery to one or more file/directory scopes. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when duplicates in tests, fixtures/config, or boilerplate matter.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -251,14 +251,14 @@ semble find-duplicates ./my-project --include-tests
 # Include static data/config chunks in duplicate discovery
 semble find-duplicates ./my-project --include-data
 
-# Include import/header/attribute scaffolding chunks in duplicate discovery
+# Include import/header/attribute scaffolding in duplicate discovery
 semble find-duplicates ./my-project --include-scaffolding
 
 # Exclude tests and generated code from duplicate discovery
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. `find_duplicates()` skips test-looking chunks unless `include_tests=True`; the CLI `find-duplicates` command applies `--include`, `--exclude`, and `--include-tests` as duplicate-scan filters without changing the indexed file set.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and import/header scaffolding by default. `find_duplicates()` skips test-looking chunks unless `include_tests=True`; the CLI `find-duplicates` command applies `--include`, `--exclude`, and `--include-tests` as duplicate-scan filters without changing the indexed file set.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 

@@ -17,7 +17,7 @@ from semble.duplicates.scoring import (
     score_duplicate_features,
 )
 from semble.path_filters import PathFilter
-from semble.types import Chunk, DuplicatePair
+from semble.types import Chunk, DuplicateMatch, DuplicatePair
 
 DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
 
@@ -173,9 +173,9 @@ def _eligible_duplicate_features(
     eligible = []
     path_filter = PathFilter(options.include_paths, options.exclude_paths, include_tests=options.include_tests)
     for index in _duplicate_candidate_indices(chunks, language_mapping, options.filter_languages, path_filter):
-        if _line_count(chunks[index]) < options.min_lines:
+        features = duplicate_features(chunks[index], include_scaffolding=options.include_scaffolding)
+        if features.effective_line_count < options.min_lines:
             continue
-        features = duplicate_features(chunks[index])
         if not duplicate_features_are_eligible(
             features,
             include_data=options.include_data,
@@ -275,7 +275,12 @@ def _maybe_add_duplicate_pair(
     if score <= 0.0 or score < min_score:
         return
 
-    result_left, result_right = _ordered_duplicate_pair(left, right)
+    result_left, result_right = _ordered_duplicate_matches(
+        left,
+        right,
+        features_by_index[left_index],
+        features_by_index[right_index],
+    )
     duplicate = DuplicatePair(left=result_left, right=result_right, score=score, signals=signals)
     pair_key = _pair_key(left, right)
     existing = pairs.get(pair_key)
@@ -291,16 +296,18 @@ def _duplicate_language_groups(chunks: Sequence[Chunk], eligible: list[int]) -> 
     return dict(groups)
 
 
-def _line_count(chunk: Chunk) -> int:
-    """Return the number of content lines in a chunk."""
-    return len(chunk.content.splitlines())
-
-
-def _ordered_duplicate_pair(left: Chunk, right: Chunk) -> tuple[Chunk, Chunk]:
-    """Return pair chunks in stable location order."""
+def _ordered_duplicate_matches(
+    left: Chunk,
+    right: Chunk,
+    left_features: DuplicateFeatures,
+    right_features: DuplicateFeatures,
+) -> tuple[DuplicateMatch, DuplicateMatch]:
+    """Return pair matches in stable location order."""
     left_key = (left.file_path, left.start_line, left.end_line)
     right_key = (right.file_path, right.start_line, right.end_line)
-    return (left, right) if left_key <= right_key else (right, left)
+    left_match = DuplicateMatch(chunk=left, content=left_features.scored_content)
+    right_match = DuplicateMatch(chunk=right, content=right_features.scored_content)
+    return (left_match, right_match) if left_key <= right_key else (right_match, left_match)
 
 
 def _duplicate_rank_key(result: DuplicatePair) -> tuple[float, float, float]:
