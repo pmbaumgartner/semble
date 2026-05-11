@@ -150,6 +150,8 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 
 All MCP tools accept `ref` for git branches or tags when indexing a git URL. If the server was started with a default git URL and `--ref`, default tool calls keep using that ref.
 
+`find_duplicates` also accepts duplicate-specific filters: `language`, `include_paths`, `exclude_paths`, `include_tests`, `include_data`, `include_scaffolding`, `min_lines`, `min_structural_score`, and `min_cluster_size`.
+
 
 ## Bash integration
 
@@ -179,16 +181,12 @@ Use `semble find-duplicates` to identify grouped duplicate implementations, copy
 ​```bash
 semble find-duplicates ./my-project
 semble find-duplicates ./my-project --language python
-semble find-duplicates ./my-project --candidate-k 24
-semble find-duplicates ./my-project --min-structural-score 0.35
+semble find-duplicates ./my-project --include src --exclude tests --exclude src/generated
 semble find-duplicates ./my-project --min-cluster-size 3
 semble find-duplicates ./my-project --include-tests
-semble find-duplicates ./my-project --include-data
-semble find-duplicates ./my-project --include-scaffolding
-semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and excludes tests, static data/config chunks, and scaffolding-only chunks by default. The Python API indexes tests by default, but `find_duplicates()` skips test-looking chunks unless `include_tests=True`; the CLI `find-duplicates` command skips tests during both indexing and scanning unless `--include-tests` is passed. Use `--min-cluster-size 3` to focus on larger repeated patterns; pass `--include-tests`, `--include-data`, or `--include-scaffolding` to include those files.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks and skips tests, static data/config, and scaffolding-only chunks by default. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when those files matter.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -315,6 +313,9 @@ results = index.search("save model to disk", top_k=3)
 # Find code similar to a specific result
 related = index.find_related(results[0], top_k=3)
 
+# Find grouped duplicate implementations
+duplicates = index.find_duplicates(top_k=3)
+
 # Each result exposes the matched chunk
 result = results[0]
 result.chunk.file_path   # "model2vec/model.py"
@@ -325,7 +326,7 @@ result.chunk.content     # "def save_pretrained(self, path: PathLike, ..."
 
 ## How it works
 
-Semble splits each file into code-aware chunks using [Chonkie](https://github.com/chonkie-inc/chonkie), then scores every query against the chunks with two complementary retrievers: static [Model2Vec](https://github.com/MinishLab/model2vec) embeddings using the code-specialized [potion-code-16M](https://huggingface.co/minishlab/potion-code-16M) model for semantic similarity, and [BM25](https://github.com/xhluca/bm25s) for lexical matches on identifiers and API names. The two score lists are fused with Reciprocal Rank Fusion (RRF).
+Semble splits files into tree-sitter-aware chunks, falling back to line-based chunks for unsupported languages. It then scores every query against those chunks with two complementary retrievers: static [Model2Vec](https://github.com/MinishLab/model2vec) embeddings using the code-specialized [potion-code-16M](https://huggingface.co/minishlab/potion-code-16M) model for semantic similarity, and [BM25](https://github.com/xhluca/bm25s) for lexical matches on identifiers and API names. The two score lists are fused with Reciprocal Rank Fusion (RRF).
 
 After fusing, results are reranked with a set of code-aware signals:
 
