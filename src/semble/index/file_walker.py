@@ -104,8 +104,16 @@ def _load_root_gitignore(root: Path) -> GitIgnoreSpec | None:
     gitignore = root / ".gitignore"
     if not gitignore.is_file():
         return None
-    with gitignore.open("r", encoding="utf-8", errors="ignore") as f:
-        return GitIgnoreSpec.from_lines(f)
+    return GitIgnoreSpec.from_lines(gitignore.read_text(encoding="utf-8", errors="ignore").splitlines())
+
+
+def _dir_is_gitignored(gitignore: GitIgnoreSpec, rel: str) -> bool:
+    """Return True if rel (a POSIX path relative to the gitignore root) matches a gitignore pattern for directories."""
+    ignored = False
+    for pattern in gitignore.patterns:
+        if pattern.include is not None and pattern.match_file(rel):
+            ignored = pattern.include
+    return ignored
 
 
 def _should_keep_dir(
@@ -119,7 +127,7 @@ def _should_keep_dir(
     if dirname in ignore_dirs:
         return False
     rel = (rel_dir / dirname).as_posix() + "/"
-    if gitignore is not None and gitignore.match_file(rel):
+    if gitignore is not None and _dir_is_gitignored(gitignore, rel):
         return False
     return True
 
@@ -157,7 +165,6 @@ def walk_files(
     gitignore = _load_root_gitignore(root)
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        # Prune in-place so os.walk doesn't descend into ignored trees.
         kept: list[str] = []
         for dirname in dirnames:
             if _should_keep_dir(
