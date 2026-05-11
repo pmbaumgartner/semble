@@ -131,15 +131,6 @@ def score_duplicate_features(
     )
 
 
-def score_duplicate_pair(left: Chunk, right: Chunk, *, semantic_score: float) -> DuplicateSignals:
-    """Compute structural duplicate signals for two indexed chunks."""
-    return score_duplicate_features(
-        duplicate_features(left),
-        duplicate_features(right),
-        semantic_score=semantic_score,
-    )
-
-
 def duplicate_score(signals: DuplicateSignals) -> float:
     """Combine semantic and structural duplicate signals into a ranking score."""
     if signals.semantic_score <= 0 or signals.structural_score <= 0:

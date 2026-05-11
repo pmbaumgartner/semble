@@ -40,7 +40,7 @@ def _format_results(header: str, results: list[SearchResult]) -> str:
     lines: list[str] = [header, ""]
     for i, r in enumerate(results, 1):
         lines.append(f"## {i}. {r.chunk.location}  [score={r.score:.3f}]")
-        _append_fenced_block(lines, r.chunk.content)
+        _append_fenced_block(lines, r.chunk.content.strip())
         lines.append("")
     return "\n".join(lines)
 
@@ -70,10 +70,10 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
             lines.append(f"Pairs not shown: {unlisted_pairs}")
         lines.append("")
         lines.append("Strongest match left:")
-        _append_fenced_block(lines, strongest.left.content)
+        _append_fenced_block(lines, strongest.left_content)
         lines.append("")
         lines.append("Strongest match right:")
-        _append_fenced_block(lines, strongest.right.content)
+        _append_fenced_block(lines, strongest.right_content)
         lines.append("")
     return "\n".join(lines)
 

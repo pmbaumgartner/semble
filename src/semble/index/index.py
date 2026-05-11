@@ -14,7 +14,6 @@ from bm25s import BM25
 from semble.duplicates.clustering import cluster_duplicate_pairs
 from semble.duplicates.search import (
     DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-    duplicate_options_from_values,
     find_duplicate_pairs,
 )
 from semble.index.create import create_index_from_path
@@ -229,13 +228,17 @@ class SembleIndex:
         :param include_scaffolding: Whether import/header/attribute scaffolding contributes to duplicate discovery.
         :return: Ranked list of duplicate clusters, best match first.
         """
-        search_options = duplicate_options_from_values(
-            top_k=top_k,
+        if top_k <= 0:
+            return []
+
+        pairs = find_duplicate_pairs(
+            self.chunks,
+            self._semantic_index,
+            self._language_mapping,
             candidate_k=candidate_k,
             min_lines=min_lines,
             min_score=min_score,
             min_structural_score=min_structural_score,
-            min_cluster_size=min_cluster_size,
             filter_languages=filter_languages,
             include_paths=include_paths,
             exclude_paths=exclude_paths,
@@ -243,16 +246,7 @@ class SembleIndex:
             include_data=include_data,
             include_scaffolding=include_scaffolding,
         )
-        if search_options.top_k <= 0:
-            return []
-
-        pairs = find_duplicate_pairs(
-            self.chunks,
-            self._semantic_index,
-            self._language_mapping,
-            search_options,
-        )
-        return cluster_duplicate_pairs(pairs, min_cluster_size=search_options.min_cluster_size)[: search_options.top_k]
+        return cluster_duplicate_pairs(pairs, min_cluster_size=min_cluster_size)[:top_k]
 
     def _get_selector_vector(
         self, filter_languages: list[str] | None = None, filter_paths: list[str] | None = None

@@ -243,13 +243,6 @@ class AstDuplicateFeatures:
     scored_content: str
 
 
-def _ast_fingerprint(content: str, language: str | None) -> tuple[set[str], set[str]] | None:
-    features = _ast_features(content, language)
-    if features is None:
-        return None
-    return features.type_ngrams, features.shape_edges
-
-
 def _ast_features(
     content: str,
     language: str | None,

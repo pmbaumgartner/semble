@@ -17,10 +17,10 @@ def cluster_duplicate_pairs(
     adjacency: dict[tuple[str, int, int], set[tuple[str, int, int]]] = {}
 
     for pair in pairs:
-        left_key = _chunk_key(pair.left.chunk)
-        right_key = _chunk_key(pair.right.chunk)
-        chunks_by_key.setdefault(left_key, pair.left.chunk)
-        chunks_by_key.setdefault(right_key, pair.right.chunk)
+        left_key = _chunk_key(pair.left)
+        right_key = _chunk_key(pair.right)
+        chunks_by_key.setdefault(left_key, pair.left)
+        chunks_by_key.setdefault(right_key, pair.right)
         adjacency.setdefault(left_key, set()).add(right_key)
         adjacency.setdefault(right_key, set()).add(left_key)
 
@@ -48,7 +48,7 @@ def cluster_duplicate_pairs(
                 (
                     pair
                     for pair in pairs
-                    if _chunk_key(pair.left.chunk) in component and _chunk_key(pair.right.chunk) in component
+                    if _chunk_key(pair.left) in component and _chunk_key(pair.right) in component
                 ),
                 key=_duplicate_pair_sort_key,
             )
@@ -82,7 +82,7 @@ def _duplicate_pair_sort_key(
         -pair.score,
         -pair.signals.semantic_score,
         -pair.signals.structural_score,
-        _pair_key(pair.left.chunk, pair.right.chunk),
+        _pair_key(pair.left, pair.right),
     )
 
 

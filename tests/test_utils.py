@@ -1,10 +1,6 @@
-from semble.types import Chunk, DuplicateCluster, DuplicateMatch, DuplicatePair, DuplicateSignals
+from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals
 from semble.utils import _format_duplicate_clusters
 from tests.conftest import make_chunk
-
-
-def _match(chunk: Chunk, content: str | None = None) -> DuplicateMatch:
-    return DuplicateMatch(chunk=chunk, content=chunk.content if content is None else content)
 
 
 def _duplicate_result(*, ast_signals: bool = False) -> DuplicatePair:
@@ -17,18 +13,32 @@ def _duplicate_result(*, ast_signals: bool = False) -> DuplicatePair:
         ast_type_jaccard=0.6 if ast_signals else None,
         ast_shape_jaccard=0.5 if ast_signals else None,
     )
-    return DuplicatePair(left=_match(left), right=_match(right), score=0.84, signals=signals)
+    return DuplicatePair(
+        left=left,
+        right=right,
+        score=0.84,
+        signals=signals,
+        left_content=left.content,
+        right_content=right.content,
+    )
 
 
 def _duplicate_cluster(*, extra_pair: bool = False) -> DuplicateCluster:
     result = _duplicate_result()
-    pairs = (result,)
-    members = (result.left.chunk, result.right.chunk)
+    pairs: tuple[DuplicatePair, ...] = (result,)
+    members: tuple[Chunk, ...] = (result.left, result.right)
     if extra_pair:
         third = make_chunk("def third():\n    return 1", "src/third.py")
-        extra = DuplicatePair(left=result.right, right=_match(third), score=0.75, signals=result.signals)
+        extra = DuplicatePair(
+            left=result.right,
+            right=third,
+            score=0.75,
+            signals=result.signals,
+            left_content=result.right_content,
+            right_content=third.content,
+        )
         pairs = (result, extra)
-        members = (result.left.chunk, result.right.chunk, third)
+        members = (result.left, result.right, third)
     return DuplicateCluster(members=members, pairs=pairs)
 
 
@@ -36,7 +46,14 @@ def _multi_pair_cluster(pair_count: int) -> DuplicateCluster:
     chunks = tuple(make_chunk(f"def item_{i}():\n    return {i}", f"src/item{i}.py") for i in range(pair_count + 1))
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
     pairs = tuple(
-        DuplicatePair(left=_match(chunks[i]), right=_match(chunks[i + 1]), score=0.9 - i * 0.01, signals=signals)
+        DuplicatePair(
+            left=chunks[i],
+            right=chunks[i + 1],
+            score=0.9 - i * 0.01,
+            signals=signals,
+            left_content=chunks[i].content,
+            right_content=chunks[i + 1].content,
+        )
         for i in range(pair_count)
     )
     return DuplicateCluster(members=chunks, pairs=pairs)
@@ -87,7 +104,14 @@ def test_format_duplicate_clusters_preserves_first_line_indentation() -> None:
     left = make_chunk("    def left():\n        return 1\n", "src/left.py")
     right = make_chunk("    def right():\n        return 1\n", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
-    pair = DuplicatePair(left=_match(left), right=_match(right), score=0.84, signals=signals)
+    pair = DuplicatePair(
+        left=left,
+        right=right,
+        score=0.84,
+        signals=signals,
+        left_content=left.content,
+        right_content=right.content,
+    )
     out = _format_duplicate_clusters("Duplicate clusters", [DuplicateCluster(members=(left, right), pairs=(pair,))])
 
     assert "\n```\n    def left():\n        return 1\n```\n" in out
@@ -100,10 +124,12 @@ def test_format_duplicate_clusters_uses_match_content() -> None:
     right = make_chunk("import os\n\ndef right():\n    return os.getcwd()", "src/right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
     pair = DuplicatePair(
-        left=_match(left, "def left():\n    return os.getcwd()"),
-        right=_match(right, "def right():\n    return os.getcwd()"),
+        left=left,
+        right=right,
         score=0.84,
         signals=signals,
+        left_content="def left():\n    return os.getcwd()",
+        right_content="def right():\n    return os.getcwd()",
     )
     out = _format_duplicate_clusters("Duplicate clusters", [DuplicateCluster(members=(left, right), pairs=(pair,))])
 

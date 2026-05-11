@@ -10,8 +10,8 @@ import watchfiles
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from semble.duplicates.search import duplicate_options_from_values
-from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
+from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
+from semble.index import SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
 from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
@@ -159,34 +159,20 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         except ValueError as exc:
             return str(exc)
 
-        options = duplicate_options_from_values(
+        clusters = await asyncio.to_thread(
+            index.find_duplicates,
             top_k=top_k,
             candidate_k=candidate_k,
-            language=language,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            min_cluster_size=min_cluster_size,
+            filter_languages=[language] if language else None,
             include_paths=include_paths,
             exclude_paths=exclude_paths,
             include_tests=include_tests,
             include_data=include_data,
             include_scaffolding=include_scaffolding,
-            min_lines=min_lines,
-            min_score=min_score,
-            min_structural_score=min_structural_score,
-            min_cluster_size=min_cluster_size,
-        )
-        clusters = await asyncio.to_thread(
-            index.find_duplicates,
-            top_k=options.top_k,
-            candidate_k=options.candidate_k,
-            min_lines=options.min_lines,
-            min_score=options.min_score,
-            min_structural_score=options.min_structural_score,
-            min_cluster_size=options.min_cluster_size,
-            filter_languages=options.filter_languages,
-            include_paths=options.include_paths,
-            exclude_paths=options.exclude_paths,
-            include_tests=options.include_tests,
-            include_data=options.include_data,
-            include_scaffolding=options.include_scaffolding,
         )
         return _format_duplicate_search_result(clusters)
 

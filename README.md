@@ -52,35 +52,7 @@ uv tool install semble   # Or install with uv
 
 > Note: for Claude Code or Codex CLI sub-agents, use the [bash integration](#bash-integration) instead of, or alongside, MCP.
 
-```python
-from semble import SembleIndex
-
-# Index a local directory
-index = SembleIndex.from_path("./my-project")
-
-# Index a remote git repository
-index = SembleIndex.from_git("https://github.com/MinishLab/model2vec")
-
-# Search the index with a natural-language or code query
-results = index.search("save model to disk", top_k=3)
-
-# Find code similar to a specific result
-related = index.find_related(results[0], top_k=3)
-
-# Find grouped duplicate implementations
-duplicates = index.find_duplicates(top_k=3)
-
-# Each result exposes the matched chunk
-result = results[0]
-result.chunk.file_path   # "model2vec/model.py"
-result.chunk.start_line  # 127
-result.chunk.end_line    # 150
-result.chunk.content     # "def save_pretrained(self, path: PathLike, ..."
-```
-
 To update Semble, see [Updating](#updating).
-
-`search(filter_paths=...)` matches exact indexed file paths. For file-or-directory scopes, use `search(include_paths=..., exclude_paths=...)`; scoped paths cannot be combined with exact `filter_paths`.
 
 Curious how many tokens Semble has saved you? Run `semble savings` to see. See [Savings](#savings) for details.
 
@@ -147,8 +119,6 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 | `search` | Search a codebase with a natural-language or code query. Pass `repo` as a local directory path or an https:// git URL. |
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
 | `find_duplicates` | Find grouped duplicate implementations and refactoring candidates in a codebase. |
-
-All MCP tools accept `ref` for git branches or tags when indexing a git URL. If the server was started with a default git URL and `--ref`, default tool calls keep using that ref.
 
 `find_duplicates` also accepts duplicate-specific filters: `language`, `include_paths`, `exclude_paths`, `include_tests`, `include_data`, `include_scaffolding`, `min_lines`, `min_structural_score`, and `min_cluster_size`.
 
@@ -327,7 +297,7 @@ result.chunk.content     # "def save_pretrained(self, path: PathLike, ..."
 
 ## How it works
 
-Semble splits files into tree-sitter-aware chunks, falling back to line-based chunks for unsupported languages. It then scores every query against those chunks with two complementary retrievers: static [Model2Vec](https://github.com/MinishLab/model2vec) embeddings using the code-specialized [potion-code-16M](https://huggingface.co/minishlab/potion-code-16M) model for semantic similarity, and [BM25](https://github.com/xhluca/bm25s) for lexical matches on identifiers and API names. The two score lists are fused with Reciprocal Rank Fusion (RRF).
+Semble splits each file into code-aware chunks using [Chonkie](https://github.com/chonkie-inc/chonkie), then scores every query against the chunks with two complementary retrievers: static [Model2Vec](https://github.com/MinishLab/model2vec) embeddings using the code-specialized [potion-code-16M](https://huggingface.co/minishlab/potion-code-16M) model for semantic similarity, and [BM25](https://github.com/xhluca/bm25s) for lexical matches on identifiers and API names. The two score lists are fused with Reciprocal Rank Fusion (RRF).
 
 After fusing, results are reranked with a set of code-aware signals:
 

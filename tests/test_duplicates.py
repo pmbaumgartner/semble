@@ -1,22 +1,6 @@
 import pytest
 
-import semble.duplicates as duplicate_exports
 import semble.duplicates.ast as duplicate_ast
-from semble import (
-    DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-    DuplicateCluster,
-    DuplicateMatch,
-    DuplicatePair,
-    DuplicateSignals,
-)
-from semble.duplicates import (
-    cluster_duplicate_pairs,
-    duplicate_features,
-    duplicate_features_are_eligible,
-    duplicate_score,
-    score_duplicate_features,
-    score_duplicate_pair,
-)
 from semble.duplicates.ast import (
     _normalize_ast_label,
     _parser_for_language,
@@ -25,12 +9,18 @@ from semble.duplicates.ast import (
 from semble.duplicates.clustering import (
     _pair_key,
     _same_file_ranges_overlap,
+    cluster_duplicate_pairs,
 )
 from semble.duplicates.scoring import (
     _weighted_structural_score,
+    duplicate_features,
+    duplicate_features_are_eligible,
+    duplicate_score,
+    score_duplicate_features,
 )
+from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.duplicates.tokens import _jaccard
-from semble.types import Chunk
+from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals
 from tests.conftest import make_chunk
 
 
@@ -45,45 +35,51 @@ def _duplicate_result(
     semantic_score = score if semantic_score is None else semantic_score
     structural_score = score if structural_score is None else structural_score
     return DuplicatePair(
-        left=DuplicateMatch(chunk=left, content=left.content),
-        right=DuplicateMatch(chunk=right, content=right.content),
+        left=left,
+        right=right,
         score=score,
         signals=DuplicateSignals(
             semantic_score=semantic_score,
             structural_score=structural_score,
             token_jaccard=structural_score,
         ),
+        left_content=left.content,
+        right_content=right.content,
     )
 
 
-def test_duplicate_types_are_exported() -> None:
-    """Duplicate result types are part of the package-level API."""
+def _score_chunks(left: Chunk, right: Chunk, *, semantic_score: float) -> DuplicateSignals:
+    return score_duplicate_features(
+        duplicate_features(left),
+        duplicate_features(right),
+        semantic_score=semantic_score,
+    )
+
+
+def test_duplicate_types_group_pairs() -> None:
+    """Duplicate result types represent scored pairs and grouped clusters."""
     left = make_chunk("def left():\n    return 1", "left.py")
     right = make_chunk("def right():\n    return 1", "right.py")
     signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.8)
-    left_match = DuplicateMatch(chunk=left, content=left.content)
-    right_match = DuplicateMatch(chunk=right, content=right.content)
-    result = DuplicatePair(left=left_match, right=right_match, score=0.84, signals=signals)
+    result = DuplicatePair(
+        left=left,
+        right=right,
+        score=0.84,
+        signals=signals,
+        left_content=left.content,
+        right_content=right.content,
+    )
     cluster = DuplicateCluster(members=(left, right), pairs=(result,))
 
-    assert result.left is left_match
-    assert result.right is right_match
-    assert result.left.chunk is left
-    assert result.right.chunk is right
-    assert result.left.content == left.content
-    assert result.right.content == right.content
+    assert result.left is left
+    assert result.right is right
+    assert result.left_content == left.content
+    assert result.right_content == right.content
     assert result.signals is signals
     assert cluster.members == (left, right)
     assert cluster.pairs == (result,)
     assert cluster.score == result.score
     assert DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE == 0.4
-
-
-def test_duplicate_package_star_exports_exclude_private_helpers() -> None:
-    """The duplicate package star export only includes stable public names."""
-    assert "_jaccard" not in duplicate_exports.__all__
-    assert "_pair_key" not in duplicate_exports.__all__
-    assert all(not name.startswith("_") for name in duplicate_exports.__all__)
 
 
 def test_score_duplicate_pair_ranks_renamed_code_above_unrelated_code() -> None:
@@ -117,8 +113,8 @@ class Renderer:
         "render.py",
     )
 
-    similar_signals = score_duplicate_pair(left, renamed, semantic_score=0.9)
-    unrelated_signals = score_duplicate_pair(left, unrelated, semantic_score=0.9)
+    similar_signals = _score_chunks(left, renamed, semantic_score=0.9)
+    unrelated_signals = _score_chunks(left, unrelated, semantic_score=0.9)
 
     assert similar_signals.token_jaccard > unrelated_signals.token_jaccard
     assert similar_signals.structural_score > unrelated_signals.structural_score
@@ -129,7 +125,7 @@ def test_empty_or_comment_only_fingerprints_are_not_perfect_matches() -> None:
     """Empty structural fingerprints score zero instead of perfect similarity."""
     left = make_chunk("# only a comment\n# another comment", "left.py")
     right = make_chunk("// only a comment\n-- another comment", "right.py")
-    signals = score_duplicate_pair(left, right, semantic_score=1.0)
+    signals = _score_chunks(left, right, semantic_score=1.0)
 
     assert _jaccard(set(), set()) == 0.0
     assert signals.token_jaccard == 0.0
@@ -165,7 +161,7 @@ def invoice_amount(products):
         "invoices.py",
     )
 
-    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+    signals = _score_chunks(left, right, semantic_score=0.9)
 
     assert signals.ast_type_jaccard is not None
     assert signals.ast_shape_jaccard is not None
@@ -199,7 +195,7 @@ def invoice_amount(products):
         "invoices.py",
     )
 
-    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+    signals = _score_chunks(left, right, semantic_score=0.9)
 
     assert signals.ast_type_jaccard is not None
     assert signals.ast_shape_jaccard is not None
@@ -217,7 +213,7 @@ def test_score_duplicate_features_reuses_precomputed_features() -> None:
     left = make_chunk("def add(a, b):\n    return a + b", "left.py")
     right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
 
-    from_chunks = score_duplicate_pair(left, right, semantic_score=0.9)
+    from_chunks = _score_chunks(left, right, semantic_score=0.9)
     from_features = score_duplicate_features(
         duplicate_features(left),
         duplicate_features(right),
@@ -431,7 +427,7 @@ def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch:
     left = make_chunk("def add(a, b):\n    return a + b", "left.py")
     right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
 
-    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+    signals = _score_chunks(left, right, semantic_score=0.9)
 
     assert signals.ast_type_jaccard is None
     assert signals.ast_shape_jaccard is None
@@ -443,7 +439,7 @@ def test_score_duplicate_pair_falls_back_for_unsupported_language() -> None:
     left = Chunk("def add(a, b):\n    return a + b", "left.txt", 1, 2, "text")
     right = Chunk("def plus(x, y):\n    return x + y", "right.txt", 1, 2, "text")
 
-    signals = score_duplicate_pair(left, right, semantic_score=0.9)
+    signals = _score_chunks(left, right, semantic_score=0.9)
 
     assert _parser_language_for_chunk("text") is None
     assert signals.ast_type_jaccard is None

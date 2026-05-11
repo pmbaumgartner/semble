@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -10,7 +11,7 @@ from vicinity.backends.basic import BasicArgs
 import semble.duplicates.search as duplicate_search
 from semble import SembleIndex
 from semble.duplicates.scoring import duplicate_features
-from semble.duplicates.search import DuplicateOptions, duplicate_options_from_values, find_duplicate_pairs
+from semble.duplicates.search import find_duplicate_pairs
 from semble.index.create import _MAX_FILE_BYTES, create_index_from_path
 from semble.index.dense import SelectableBasicBackend
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
@@ -26,7 +27,7 @@ def indexed_index(mock_model: Any, tmp_project: Path) -> SembleIndex:
 class _ConstantModel:
     """Test encoder that makes every semantic query equally similar."""
 
-    def encode(self, texts: list[str], /) -> npt.NDArray[np.float32]:
+    def encode(self, texts: Sequence[str], /) -> npt.NDArray[np.float32]:
         """Return a unit vector for each text."""
         vectors = np.zeros((len(texts), 4), dtype=np.float32)
         vectors[:, 0] = 1.0
@@ -250,18 +251,16 @@ def total(items):
         index.chunks,
         index._semantic_index,
         index._language_mapping,
-        DuplicateOptions(
-            candidate_k=12,
-            min_lines=1,
-            min_score=0.0,
-            min_structural_score=0.0,
-            filter_languages=None,
-            include_paths=None,
-            exclude_paths=None,
-            include_tests=False,
-            include_data=False,
-            include_scaffolding=False,
-        ),
+        candidate_k=12,
+        min_lines=1,
+        min_score=0.0,
+        min_structural_score=0.0,
+        filter_languages=None,
+        include_paths=None,
+        exclude_paths=None,
+        include_tests=False,
+        include_data=False,
+        include_scaffolding=False,
     )
 
     assert len(all_pairs) == 3
@@ -269,13 +268,6 @@ def total(items):
     assert len(clusters) == 1
     assert clusters[0].pairs == tuple(all_pairs)
     assert all_pairs == sorted(all_pairs, key=duplicate_search._duplicate_sort_key)
-
-
-def test_duplicate_options_reject_singular_and_plural_language_filters() -> None:
-    """CLI-style language and API-style filter_languages cannot both be supplied."""
-    with pytest.raises(ValueError, match="language or filter_languages"):
-        duplicate_options_from_values(language="python", filter_languages=["javascript"])
-
 
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
     """Duplicate discovery reuses indexed embeddings instead of encoding each chunk again."""
@@ -692,8 +684,8 @@ def send_email(message):
     scaffold_clusters = index.find_duplicates(min_lines=1, include_scaffolding=True)
     assert len(scaffold_clusters) == 1
     scaffold_pair = scaffold_clusters[0].pairs[0]
-    assert "import alpha" in scaffold_pair.left.content
-    assert "import alpha" in scaffold_pair.right.content
+    assert "import alpha" in scaffold_pair.left_content
+    assert "import alpha" in scaffold_pair.right_content
 
 
 def test_find_duplicates_keeps_substantive_duplicates_with_scaffolding_stripped() -> None:
@@ -726,12 +718,12 @@ def normalize_email(email):
     clusters = index.find_duplicates(min_lines=1)
     assert len(clusters) == 1
     pair = clusters[0].pairs[0]
-    assert "import alpha" in pair.left.chunk.content
-    assert "import alpha" in pair.right.chunk.content
-    assert "import alpha" not in pair.left.content
-    assert "import alpha" not in pair.right.content
-    assert "def normalize_user" in pair.left.content
-    assert "def normalize_email" in pair.right.content
+    assert "import alpha" in pair.left.content
+    assert "import alpha" in pair.right.content
+    assert "import alpha" not in pair.left_content
+    assert "import alpha" not in pair.right_content
+    assert "def normalize_user" in pair.left_content
+    assert "def normalize_email" in pair.right_content
 
 
 def test_find_duplicates_keeps_declaration_only_chunks_without_static_bindings() -> None:

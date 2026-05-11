@@ -116,40 +116,7 @@ def _dir_is_gitignored(gitignore: GitIgnoreSpec, rel: str) -> bool:
     return ignored
 
 
-def _should_keep_dir(
-    rel_dir: Path,
-    dirname: str,
-    *,
-    ignore_dirs: frozenset[str],
-    gitignore: GitIgnoreSpec | None,
-) -> bool:
-    """Return whether os.walk should descend into a directory."""
-    if dirname in ignore_dirs:
-        return False
-    rel = (rel_dir / dirname).as_posix() + "/"
-    if gitignore is not None and _dir_is_gitignored(gitignore, rel):
-        return False
-    return True
-
-
-def _should_yield_file(
-    rel_file: str,
-    file_path: Path,
-    *,
-    extensions: frozenset[str],
-    gitignore: GitIgnoreSpec | None,
-) -> bool:
-    """Return whether a file passes extension and gitignore filters."""
-    if file_path.suffix.lower() not in extensions:
-        return False
-    return gitignore is None or not gitignore.match_file(rel_file)
-
-
-def walk_files(
-    root: Path,
-    extensions: frozenset[str],
-    ignore: frozenset[str] | None = None,
-) -> Iterator[Path]:
+def walk_files(root: Path, extensions: frozenset[str], ignore: frozenset[str] | None = None) -> Iterator[Path]:
     """Yield files under root matching extensions, skipping ignored paths.
 
     Directories matching DEFAULT_IGNORED_DIRS plus any names in ignore are always
@@ -167,21 +134,16 @@ def walk_files(
         rel_dir = Path(dirpath).relative_to(root)
         kept: list[str] = []
         for dirname in dirnames:
-            if _should_keep_dir(
-                rel_dir,
-                dirname,
-                ignore_dirs=ignore_dirs,
-                gitignore=gitignore,
-            ):
-                kept.append(dirname)
+            if dirname in ignore_dirs:
+                continue
+            if gitignore is not None and _dir_is_gitignored(gitignore, (rel_dir / dirname).as_posix() + "/"):
+                continue
+            kept.append(dirname)
         dirnames[:] = kept
         for filename in sorted(filenames):
             file_path = Path(dirpath) / filename
-            rel_file = (rel_dir / filename).as_posix()
-            if _should_yield_file(
-                rel_file,
-                file_path,
-                extensions=extensions,
-                gitignore=gitignore,
-            ):
-                yield file_path
+            if file_path.suffix.lower() not in extensions:
+                continue
+            if gitignore is not None and gitignore.match_file((rel_dir / filename).as_posix()):
+                continue
+            yield file_path
