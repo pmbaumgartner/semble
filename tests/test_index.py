@@ -14,6 +14,7 @@ from semble.duplicates.search import DuplicateOptions, duplicate_options_from_va
 from semble.index.create import _MAX_FILE_BYTES, create_index_from_path
 from semble.index.dense import SelectableBasicBackend
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
+from tests.conftest import make_chunk
 
 
 @pytest.fixture
@@ -179,6 +180,25 @@ def test_search_scoped_paths_are_directory_aware_and_guard_legacy_filter_paths()
 def test_search_empty_query_returns_empty(indexed_index: SembleIndex, mode: str, query: str) -> None:
     """Empty / whitespace-only queries return [] across all modes."""
     assert indexed_index.search(query, mode=mode) == []
+
+
+@pytest.mark.parametrize(
+    ("disk_files", "chunk_paths", "expected"),
+    [
+        ({"foo.py": "hello world"}, ["foo.py", "foo.py"], {"foo.py": 11}),
+        ({}, ["nonexistent.py"], {}),
+    ],
+    ids=["dedup-same-file", "missing-file-skipped"],
+)
+def test_compute_file_sizes(
+    tmp_path: Path, disk_files: dict[str, str], chunk_paths: list[str], expected: dict[str, int]
+) -> None:
+    """_compute_file_sizes deduplicates paths and silently skips missing files."""
+    for name, content in disk_files.items():
+        (tmp_path / name).write_text(content)
+    index = SembleIndex.__new__(SembleIndex)
+    index.chunks = [make_chunk("c", p) for p in chunk_paths]
+    assert index._compute_file_sizes(tmp_path) == expected
 
 
 def test_find_related(indexed_index: SembleIndex) -> None:

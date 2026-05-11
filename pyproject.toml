@@ -30,8 +30,9 @@ dependencies = [
     "vicinity>=0.4.4",
     "numpy>=1.24.0",
     "bm25s>=0.2.0",
-    "chonkie[code]!=1.6.3",
     "pathspec>=0.12",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.0,<1.8.0,!=1.6.3"
 ]
 
 [project.optional-dependencies]
@@ -142,5 +143,4 @@ skip_covered = true
 exclude_also = ["if __name__ == .__main__.:", "@abstractmethod"]
 
 [tool.uv]
-exclude-newer = "2026-04-28T05:34:18.12564Z"
-constraint-dependencies = ["tree-sitter-language-pack!=1.6.3"] # no MacOS wheels
+exclude-newer = "2026-05-04T09:49:57Z"

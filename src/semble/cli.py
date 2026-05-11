@@ -10,10 +10,11 @@ from model2vec.utils import get_package_extras
 
 from semble.duplicates.search import duplicate_options_from_values
 from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateOptions, SembleIndex
+from semble.stats import format_savings_report
 from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
-_CLI_COMMANDS = ("search", "find-related", "find-duplicates", "init")
+_CLI_COMMANDS = ("search", "find-related", "find-duplicates", "init", "savings")
 _CLI_DISPATCH_ARGS = frozenset((*_CLI_COMMANDS, "-h", "--help"))
 
 
@@ -137,6 +138,10 @@ def build_cli_parser() -> argparse.ArgumentParser:
     init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
     init_p.set_defaults(handler=run_init)
 
+    savings_p = sub.add_parser("savings", help="Show token savings and usage stats.")
+    savings_p.add_argument("--verbose", action="store_true", help="Also show usage breakdown by call type.")
+    savings_p.set_defaults(handler=run_savings)
+
     return parser
 
 
@@ -153,6 +158,11 @@ def _cli_main() -> None:
 def run_init(args: argparse.Namespace) -> None:
     """Run the init CLI command."""
     _run_init(force=args.force)
+
+
+def run_savings(args: argparse.Namespace) -> None:
+    """Run the savings CLI command."""
+    print(format_savings_report(verbose=args.verbose), end="")
 
 
 def run_search(args: argparse.Namespace) -> None:
