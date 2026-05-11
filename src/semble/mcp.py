@@ -57,6 +57,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             "Call `find_duplicates` to identify grouped duplicate implementations and refactoring candidates. "
             "When working in a local project, pass the project root as `repo`. "
             "For remote repos, pass an explicit https:// URL. Never guess or infer URLs. "
+            "To search Markdown, YAML, JSON, or TOML, start the server with `--include-text-files`. "
             "Prefer these tools over Grep, Glob, or Read for any question about how code works."
         ),
     )

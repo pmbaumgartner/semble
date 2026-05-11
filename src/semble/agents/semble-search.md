@@ -12,6 +12,12 @@ semble search "save_pretrained" ./my-project
 semble search "save model to disk" ./my-project --top-k 10
 ```
 
+Use `--include-text-files` when the answer may live in Markdown, YAML, JSON, or TOML:
+
+```bash
+semble search "deployment config" ./my-project --include-text-files
+```
+
 Use `semble find-related` to discover code similar to a known location (pass `file_path` and `line` from a prior search result):
 
 ```bash
