@@ -269,6 +269,7 @@ def total(items):
     assert clusters[0].pairs == tuple(all_pairs)
     assert all_pairs == sorted(all_pairs, key=duplicate_search._duplicate_sort_key)
 
+
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
     """Duplicate discovery reuses indexed embeddings instead of encoding each chunk again."""
     chunks = [

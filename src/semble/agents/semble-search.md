@@ -35,7 +35,7 @@ semble find-duplicates ./my-project --min-cluster-size 3
 semble find-duplicates ./my-project --include-tests
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips tests, static data/config, and import/header scaffolding by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include` to narrow duplicate discovery to one or more file/directory scopes. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when duplicates in tests, fixtures/config, or boilerplate matter.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips test-looking paths plus low-signal static data/config and import/header scaffolding by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include`, `--exclude`, `--include-tests`, `--include-data`, and `--include-scaffolding` to adjust only the duplicate scan; these filters do not change the indexed file set or normal search behavior.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
