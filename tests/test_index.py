@@ -78,24 +78,21 @@ def test_index_markdown_inclusion(
     assert has_md is md_in_results
 
 
-def test_index_filters_duplicate_discovery_paths_up_front(mock_model: Encoder, tmp_path: Path) -> None:
-    """Index creation can skip duplicate-only path scopes before chunk embedding."""
+def test_index_keeps_duplicate_discovery_scopes_for_scan_time_filters(mock_model: Encoder, tmp_path: Path) -> None:
+    """Index creation keeps normally indexable files; duplicate filters run during scans."""
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "keep.py").write_text("def keep():\n    return 1\n")
     (tmp_path / "src" / "generated.py").write_text("def generated():\n    return 2\n")
     (tmp_path / "tests" / "test_keep.py").write_text("def test_keep():\n    assert True\n")
 
-    _, _, chunks = create_index_from_path(
-        tmp_path,
-        mock_model,
-        include_paths=["src"],
-        exclude_paths=["src/generated.py"],
-        include_tests=False,
-        display_root=tmp_path,
-    )
+    _, _, chunks = create_index_from_path(tmp_path, mock_model, display_root=tmp_path)
 
-    assert {chunk.file_path for chunk in chunks} == {"src/keep.py"}
+    assert {chunk.file_path for chunk in chunks} == {
+        "src/keep.py",
+        "src/generated.py",
+        "tests/test_keep.py",
+    }
 
 
 def test_index_empty_returns_zero_chunks(mock_model: Encoder, tmp_path: Path) -> None:

@@ -72,32 +72,8 @@ def test_walk_files_prunes_ignored_dirs(tmp_path: Path, monkeypatch: pytest.Monk
     assert not any("node_modules" in v for v in visited[1:]), visited
 
 
-def test_walk_files_prunes_dirs_outside_include_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Include path scopes prune unrelated directories before file filtering."""
-    _touch(tmp_path / "src" / "keep.py")
-    _touch(tmp_path / "src" / "skip.py")
-    _touch(tmp_path / "docs" / "deep" / "skip.py")
-
-    visited: list[str] = []
-    real_walk = os.walk
-
-    def tracking_walk(top: str) -> Iterator[tuple[str, list[str], list[str]]]:
-        for dirpath, dirnames, filenames in real_walk(top):
-            visited.append(dirpath)
-            yield dirpath, dirnames, filenames
-
-    monkeypatch.setattr("semble.index.file_walker.os.walk", tracking_walk)
-    found = {
-        p.relative_to(tmp_path).as_posix()
-        for p in walk_files(tmp_path, frozenset({".py"}), include_paths=["src/keep.py"])
-    }
-
-    assert found == {"src/keep.py"}
-    assert not any("docs" in v for v in visited[1:]), visited
-
-
-def test_walk_files_excludes_language_common_test_paths(tmp_path: Path) -> None:
-    """Test exclusion catches common non-Python test path conventions."""
+def test_walk_files_yields_supported_test_paths(tmp_path: Path) -> None:
+    """The file walker yields normally indexable test-looking files."""
     files = [
         "src/keep.go",
         "src/foo_test.go",
@@ -111,7 +87,7 @@ def test_walk_files_excludes_language_common_test_paths(tmp_path: Path) -> None:
 
     found = {
         p.relative_to(tmp_path).as_posix()
-        for p in walk_files(tmp_path, frozenset({".go", ".php", ".java", ".ts", ".rb"}), include_tests=False)
+        for p in walk_files(tmp_path, frozenset({".go", ".php", ".java", ".ts", ".rb"}))
     }
 
-    assert found == {"src/keep.go"}
+    assert found == set(files)

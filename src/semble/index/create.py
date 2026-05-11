@@ -1,5 +1,4 @@
 import contextlib
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,9 +22,6 @@ class IndexBuildOptions:
     extensions: frozenset[str] | None = None
     ignore: frozenset[str] | None = None
     include_text_files: bool = False
-    include_paths: Sequence[str] | None = None
-    exclude_paths: Sequence[str] | None = None
-    include_tests: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,9 +40,6 @@ def create_index_from_path(
     ignore: frozenset[str] | None = None,
     include_text_files: bool = False,
     display_root: Path | None = None,
-    include_paths: Sequence[str] | None = None,
-    exclude_paths: Sequence[str] | None = None,
-    include_tests: bool = True,
 ) -> tuple[bm25s.BM25, SelectableBasicBackend, list[Chunk]]:
     """Create an index from a resolved directory, optionally storing chunk paths relative to display_root.
 
@@ -56,9 +49,6 @@ def create_index_from_path(
     :param ignore: Directory names to skip.
     :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
     :param display_root: If set, chunk file paths are stored relative to this root.
-    :param include_paths: Optional repo-relative file or directory scopes to include.
-    :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-    :param include_tests: Whether test-looking paths should be indexed.
     :raises ValueError: if no items were found, no index can be created.
     :return: A bm25 index, vicinity index and list of chunks
     """
@@ -66,9 +56,6 @@ def create_index_from_path(
         extensions=extensions,
         ignore=ignore,
         include_text_files=include_text_files,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        include_tests=include_tests,
     )
     built = build_index_from_path(path, model, options=options, display_root=display_root)
     return built.bm25, built.semantic, built.chunks
@@ -85,14 +72,7 @@ def build_index_from_path(
     extensions = filter_extensions(options.extensions, include_text_files=options.include_text_files)
     chunks: list[Chunk] = []
 
-    for file_path in walk_files(
-        path,
-        extensions,
-        options.ignore,
-        include_paths=options.include_paths,
-        exclude_paths=options.exclude_paths,
-        include_tests=options.include_tests,
-    ):
+    for file_path in walk_files(path, extensions, options.ignore):
         language = language_for_path(file_path)
         with contextlib.suppress(OSError):
             if file_path.stat().st_size > _MAX_FILE_BYTES:

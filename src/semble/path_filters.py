@@ -21,11 +21,6 @@ def path_in_scope(file_path: str, scopes: Sequence[str]) -> bool:
     return _path_in_normalized_scopes(normalize_scope_path(file_path), _normalize_scopes(scopes) or ())
 
 
-def path_may_contain_scope(dir_path: str, scopes: Sequence[str]) -> bool:
-    """Return whether a repo-relative directory might contain an included scope."""
-    return _dir_may_contain_normalized_scope(normalize_scope_path(dir_path), _normalize_scopes(scopes) or ())
-
-
 def is_test_path(file_path: str) -> bool:
     """Return whether a repo-relative path looks like a test file or test directory."""
     normalized = normalize_scope_path(file_path)
@@ -39,14 +34,6 @@ def is_test_path(file_path: str) -> bool:
     return any(fnmatchcase(normalized_filename, pattern) for pattern in _TEST_FILE_PATTERNS) or _is_pascal_test_file(
         filename
     )
-
-
-def is_test_dir_path(dir_path: str) -> bool:
-    """Return whether a repo-relative directory path is inside a test-looking directory."""
-    normalized = normalize_scope_path(dir_path)
-    if not normalized:
-        return False
-    return any(part.lower() in _TEST_DIR_NAMES for part in normalized.split("/"))
 
 
 def _is_pascal_test_file(filename: str) -> bool:
@@ -94,15 +81,6 @@ class PathFilter:
             return False
         return self.include_tests or not is_test_path(normalized_path)
 
-    def may_contain_dir(self, dir_path: str) -> bool:
-        """Return whether a repo-relative directory should be descended into."""
-        normalized_dir = normalize_scope_path(dir_path)
-        if self.exclude_paths and _path_in_normalized_scopes(normalized_dir, self.exclude_paths):
-            return False
-        if self.include_paths and not _dir_may_contain_normalized_scope(normalized_dir, self.include_paths):
-            return False
-        return self.include_tests or not is_test_dir_path(normalized_dir)
-
 
 def _normalize_scopes(scopes: Sequence[str] | None) -> tuple[str, ...] | None:
     if not scopes:
@@ -115,20 +93,5 @@ def _path_in_normalized_scopes(normalized_path: str, normalized_scopes: Sequence
         if normalized_scope in {"", "."}:
             return True
         if normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/"):
-            return True
-    return False
-
-
-def _dir_may_contain_normalized_scope(normalized_dir: str, normalized_scopes: Sequence[str]) -> bool:
-    if normalized_dir in {"", "."}:
-        return True
-    for normalized_scope in normalized_scopes:
-        if normalized_scope in {"", "."}:
-            return True
-        if normalized_dir == normalized_scope:
-            return True
-        if normalized_dir.startswith(f"{normalized_scope}/"):
-            return True
-        if normalized_scope.startswith(f"{normalized_dir}/"):
             return True
     return False

@@ -1,12 +1,10 @@
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from pathspec import GitIgnoreSpec
-
-from semble.path_filters import PathFilter
 
 
 class FileCategory(str, Enum):
@@ -116,7 +114,6 @@ def _should_keep_dir(
     *,
     ignore_dirs: frozenset[str],
     gitignore: GitIgnoreSpec | None,
-    path_filter: PathFilter,
 ) -> bool:
     """Return whether os.walk should descend into a directory."""
     if dirname in ignore_dirs:
@@ -124,7 +121,7 @@ def _should_keep_dir(
     rel = (rel_dir / dirname).as_posix() + "/"
     if gitignore is not None and gitignore.match_file(rel):
         return False
-    return path_filter.may_contain_dir(rel.rstrip("/"))
+    return True
 
 
 def _should_yield_file(
@@ -133,23 +130,17 @@ def _should_yield_file(
     *,
     extensions: frozenset[str],
     gitignore: GitIgnoreSpec | None,
-    path_filter: PathFilter,
 ) -> bool:
-    """Return whether a file passes extension, gitignore, and duplicate path filters."""
+    """Return whether a file passes extension and gitignore filters."""
     if file_path.suffix.lower() not in extensions:
         return False
-    if gitignore is not None and gitignore.match_file(rel_file):
-        return False
-    return path_filter.includes(rel_file)
+    return gitignore is None or not gitignore.match_file(rel_file)
 
 
 def walk_files(
     root: Path,
     extensions: frozenset[str],
     ignore: frozenset[str] | None = None,
-    include_paths: Sequence[str] | None = None,
-    exclude_paths: Sequence[str] | None = None,
-    include_tests: bool = True,
 ) -> Iterator[Path]:
     """Yield files under root matching extensions, skipping ignored paths.
 
@@ -159,15 +150,11 @@ def walk_files(
     :param root: Root directory to walk.
     :param extensions: Set of file extensions to include (e.g. {".py", ".js"}).
     :param ignore: Additional directory names to ignore (e.g. {"build", "dist"}).
-    :param include_paths: Optional repo-relative file or directory scopes to include.
-    :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-    :param include_tests: Whether test-looking paths should be yielded.
     :yield: Path to each file under root matching the criteria.
     :ytype: Path
     """
     ignore_dirs = DEFAULT_IGNORED_DIRS | (ignore or frozenset())
     gitignore = _load_root_gitignore(root)
-    path_filter = PathFilter(include_paths, exclude_paths, include_tests=include_tests)
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
         # Prune in-place so os.walk doesn't descend into ignored trees.
@@ -178,7 +165,6 @@ def walk_files(
                 dirname,
                 ignore_dirs=ignore_dirs,
                 gitignore=gitignore,
-                path_filter=path_filter,
             ):
                 kept.append(dirname)
         dirnames[:] = kept
@@ -190,6 +176,5 @@ def walk_files(
                 file_path,
                 extensions=extensions,
                 gitignore=gitignore,
-                path_filter=path_filter,
             ):
                 yield file_path

@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import sys
-from collections.abc import Sequence
 from importlib.resources import files
 from importlib.util import find_spec
 from pathlib import Path
@@ -105,12 +104,22 @@ def build_cli_parser() -> argparse.ArgumentParser:
         help="Semantic neighbors to inspect per chunk before scoring (default: 12).",
     )
     duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
-    duplicates_p.add_argument("--include", action="append", dest="include_paths", help="File or directory scope to include.")
-    duplicates_p.add_argument("--exclude", action="append", dest="exclude_paths", help="File or directory scope to exclude.")
+    duplicates_p.add_argument(
+        "--include",
+        action="append",
+        dest="include_paths",
+        help="File or directory scope to include in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--exclude",
+        action="append",
+        dest="exclude_paths",
+        help="File or directory scope to exclude from duplicate discovery.",
+    )
     duplicates_p.add_argument(
         "--include-tests",
         action="store_true",
-        help="Include test files while indexing and scanning for duplicates.",
+        help="Include test files in duplicate discovery.",
     )
     duplicates_p.add_argument("--include-data", action="store_true", help="Include static data/config chunks in duplicate discovery.")
     duplicates_p.add_argument(
@@ -192,36 +201,19 @@ def run_find_related(args: argparse.Namespace) -> None:
 def run_find_duplicates(args: argparse.Namespace) -> None:
     """Run the find-duplicates CLI command."""
     options = _duplicate_options_from_args(args)
-    index = _load_index(
-        args,
-        include_paths=options.include_paths,
-        exclude_paths=options.exclude_paths,
-        include_tests=options.include_tests,
-    )
+    index = _load_index(args)
     print(_format_duplicate_search_result(index.find_duplicates(options=options)))
 
 
-def _load_index(
-    args: argparse.Namespace,
-    *,
-    include_paths: Sequence[str] | None = None,
-    exclude_paths: Sequence[str] | None = None,
-    include_tests: bool = True,
-) -> SembleIndex:
+def _load_index(args: argparse.Namespace) -> SembleIndex:
     include_text_files = getattr(args, "include_text_files", False)
     if _is_git_url(args.path):
         return SembleIndex.from_git(
             args.path,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            include_tests=include_tests,
             include_text_files=include_text_files,
         )
     return SembleIndex.from_path(
         args.path,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        include_tests=include_tests,
         include_text_files=include_text_files,
     )
 

@@ -135,9 +135,6 @@ class SembleIndex:
         extensions: frozenset[str] | None = None,
         ignore: frozenset[str] | None = None,
         include_text_files: bool = False,
-        include_paths: Sequence[str] | None = None,
-        exclude_paths: Sequence[str] | None = None,
-        include_tests: bool = True,
     ) -> SembleIndex:
         """Create and index a SembleIndex from a directory.
 
@@ -146,11 +143,6 @@ class SembleIndex:
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
         :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
-        :param include_paths: Optional repo-relative file or directory scopes to include.
-        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-        :param include_tests: Whether test-looking paths should be indexed. Defaults to
-            True; duplicate discovery still skips test-looking chunks unless
-            ``find_duplicates(include_tests=True)`` is passed.
         :return: An indexed SembleIndex. Chunk file paths are relative to ``path``.
         :raises FileNotFoundError: If `path` does not exist.
         :raises NotADirectoryError: If `path` exists but is not a directory.
@@ -160,9 +152,6 @@ class SembleIndex:
             extensions=extensions,
             ignore=ignore,
             include_text_files=include_text_files,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            include_tests=include_tests,
         )
         path = Path(path)
         if not path.exists():
@@ -180,9 +169,6 @@ class SembleIndex:
         extensions: frozenset[str] | None = None,
         ignore: frozenset[str] | None = None,
         include_text_files: bool = False,
-        include_paths: Sequence[str] | None = None,
-        exclude_paths: Sequence[str] | None = None,
-        include_tests: bool = True,
     ) -> SembleIndex:
         """Clone a git repository and index it.
 
@@ -197,11 +183,6 @@ class SembleIndex:
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
         :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
-        :param include_paths: Optional repo-relative file or directory scopes to include.
-        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-        :param include_tests: Whether test-looking paths should be indexed. Defaults to
-            True; duplicate discovery still skips test-looking chunks unless
-            ``find_duplicates(include_tests=True)`` is passed.
         :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
         :raises RuntimeError: If git is not on PATH, the clone fails, or times out.
         """
@@ -224,9 +205,6 @@ class SembleIndex:
                 extensions=extensions,
                 ignore=ignore,
                 include_text_files=include_text_files,
-                include_paths=include_paths,
-                exclude_paths=exclude_paths,
-                include_tests=include_tests,
             )
             return cls._from_resolved_path(resolved_path, model, options)
 

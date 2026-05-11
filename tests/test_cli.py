@@ -154,9 +154,6 @@ def test_cli_find_duplicates_maps_options(
 
     mock_from_path.assert_called_once_with(
         "/some/path",
-        include_paths=("src", "lib"),
-        exclude_paths=("tests", "src/generated"),
-        include_tests=True,
         include_text_files=False,
     )
     fake_index.find_duplicates.assert_called_once_with(
@@ -194,9 +191,6 @@ def test_cli_find_duplicates_empty_state(
 
     mock_from_path.assert_called_once_with(
         "/some/path",
-        include_paths=None,
-        exclude_paths=None,
-        include_tests=False,
         include_text_files=False,
     )
     fake_index.find_duplicates.assert_called_once_with(options=DuplicateOptions())
@@ -216,9 +210,6 @@ def test_cli_find_duplicates_uses_git_url(
 
     mock_from_git.assert_called_once_with(
         "https://github.com/org/repo",
-        include_paths=None,
-        exclude_paths=None,
-        include_tests=False,
         include_text_files=False,
     )
     assert "No duplicate clusters found." in capsys.readouterr().out
