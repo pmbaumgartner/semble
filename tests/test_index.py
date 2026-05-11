@@ -148,30 +148,6 @@ def test_search_with_filter_paths_does_not_crash(indexed_index: SembleIndex, mod
     assert all(r.chunk.file_path == target_path for r in results)
 
 
-def test_search_scoped_paths_are_directory_aware_and_guard_legacy_filter_paths() -> None:
-    """Scoped search paths support directory prefixes and cannot mix with exact-file filters."""
-    index = _duplicate_index(
-        [
-            _chunk("def total(items):\n    return sum(items)", "src/a.py"),
-            _chunk("def total(items):\n    return sum(items)", "src/nested/b.py"),
-            _chunk("def total(items):\n    return sum(items)", "src/generated/c.py"),
-            _chunk("def total(items):\n    return sum(items)", "tests/test_total.py"),
-        ]
-    )
-
-    results = index.search(
-        "total",
-        top_k=10,
-        mode="semantic",
-        include_paths=["src"],
-        exclude_paths=["src/generated"],
-    )
-
-    assert {result.chunk.file_path for result in results} == {"src/a.py", "src/nested/b.py"}
-    with pytest.raises(ValueError, match="filter_paths"):
-        index.search("total", filter_paths=["src/a.py"], include_paths=["src"])
-
-
 @pytest.mark.parametrize("mode", ["bm25", "hybrid", "semantic"])
 @pytest.mark.parametrize("query", ["", "   ", "\n\n"])
 def test_search_empty_query_returns_empty(indexed_index: SembleIndex, mode: str, query: str) -> None:
@@ -299,19 +275,6 @@ def test_duplicate_options_reject_singular_and_plural_language_filters() -> None
     """CLI-style language and API-style filter_languages cannot both be supplied."""
     with pytest.raises(ValueError, match="language or filter_languages"):
         duplicate_options_from_values(language="python", filter_languages=["javascript"])
-
-
-def test_find_duplicates_rejects_options_mixed_with_kwargs() -> None:
-    """find_duplicates has one options-object style and one keyword style."""
-    index = _duplicate_index(
-        [
-            _chunk("def add(a, b):\n    return a + b", "src/a.py"),
-            _chunk("def add(a, b):\n    return a + b", "src/b.py"),
-        ]
-    )
-
-    with pytest.raises(ValueError, match="either options or duplicate option keyword"):
-        index.find_duplicates(options=DuplicateOptions(min_lines=1), top_k=1)
 
 
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:

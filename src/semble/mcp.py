@@ -23,11 +23,6 @@ _REPO_DESCRIPTION = (
     "Required when no default index was configured at startup. "
     "The index is cached after the first call, so repeat queries are fast."
 )
-_REF_DESCRIPTION = "Branch or tag to check out for git URLs. Ignored for local paths."
-_NO_REPO_MESSAGE = (
-    "No repo specified and no default index. "
-    "Pass a git URL (https://github.com/...) or local path as `repo`."
-)
 
 _CACHE_MAX_SIZE = 10  # Max number of cached indexes to keep in memory
 
@@ -52,129 +47,7 @@ async def _get_index(
         raise ValueError(f"Failed to index {source!r}: {exc}") from exc
 
 
-async def _get_index_or_error(
-    cache: _IndexCache,
-    source: str | None,
-    ref: str | None = None,
-) -> tuple[SembleIndex | None, str | None]:
-    """Return an index for source, or a user-facing MCP error message."""
-    if not source:
-        return None, _NO_REPO_MESSAGE
-    if _is_git_url(source) and not source.startswith(("https://", "http://")):
-        return None, f"Only https://, http://, or local directory paths are accepted as `repo`. Got: {source!r}"
-    try:
-        return await cache.get(source, ref=ref), None
-    except Exception as exc:
-        return None, f"Failed to index {source!r}: {exc}"
-
-
-def _resolve_source_ref(
-    repo: str | None,
-    ref: str | None,
-    default_source: str | None,
-    default_ref: str | None,
-) -> tuple[str | None, str | None]:
-    """Return the effective source and ref for an MCP tool call."""
-    if repo:
-        return repo, ref
-    return default_source, ref if ref is not None else default_ref
-
-
-async def _search_codebase(
-    cache: _IndexCache,
-    source: str | None,
-    ref: str | None,
-    query: str,
-    mode: Literal["hybrid", "semantic", "bm25"],
-    top_k: int,
-) -> str:
-    """Search a codebase and format MCP text output."""
-    index, error = await _get_index_or_error(cache, source, ref=ref)
-    if error:
-        return error
-    assert index is not None
-
-    results = index.search(query, top_k=top_k, mode=mode)
-    if not results:
-        return "No results found."
-    return _format_results(f"Search results for: {query!r} (mode={mode})", results)
-
-
-async def _find_related_code(
-    cache: _IndexCache,
-    source: str | None,
-    ref: str | None,
-    file_path: str,
-    line: int,
-    top_k: int,
-) -> str:
-    """Find related code for a source location and format MCP text output."""
-    index, error = await _get_index_or_error(cache, source, ref=ref)
-    if error:
-        return error
-    assert index is not None
-
-    chunk = _resolve_chunk(index.chunks, file_path, line)
-    if chunk is None:
-        return (
-            f"No chunk found at {file_path}:{line}. "
-            "Make sure the file is indexed and the line number is within a known chunk."
-        )
-    results = index.find_related(chunk, top_k=top_k)
-    if not results:
-        return f"No related chunks found for {file_path}:{line}."
-    return _format_results(f"Chunks related to {file_path}:{line}", results)
-
-
-async def _find_duplicate_code(
-    cache: _IndexCache,
-    source: str | None,
-    ref: str | None,
-    top_k: int,
-    candidate_k: int,
-    language: str | None,
-    include_paths: list[str] | None,
-    exclude_paths: list[str] | None,
-    include_tests: bool,
-    include_data: bool,
-    include_scaffolding: bool,
-    min_lines: int,
-    min_score: float,
-    min_structural_score: float,
-    min_cluster_size: int,
-) -> str:
-    """Find duplicate-code clusters and format MCP text output."""
-    index, error = await _get_index_or_error(cache, source, ref=ref)
-    if error:
-        return error
-    assert index is not None
-
-    options = duplicate_options_from_values(
-        top_k=top_k,
-        candidate_k=candidate_k,
-        language=language,
-        include_paths=include_paths,
-        exclude_paths=exclude_paths,
-        include_tests=include_tests,
-        include_data=include_data,
-        include_scaffolding=include_scaffolding,
-        min_lines=min_lines,
-        min_score=min_score,
-        min_structural_score=min_structural_score,
-        min_cluster_size=min_cluster_size,
-    )
-    clusters = await asyncio.to_thread(
-        index.find_duplicates,
-        options=options,
-    )
-    return _format_duplicate_search_result(clusters)
-
-
-def create_server(
-    cache: _IndexCache,
-    default_source: str | None = None,
-    default_ref: str | None = None,
-) -> FastMCP:
+def create_server(cache: _IndexCache, default_source: str | None = None) -> FastMCP:
     """Build and return a configured FastMCP server backed by the given cache."""
     server = FastMCP(
         "semble",
@@ -197,16 +70,20 @@ def create_server(
             Field(description="Search mode. 'hybrid' is best for most queries."),
         ] = "hybrid",
         top_k: Annotated[int, Field(description="Number of results to return.", ge=1)] = 5,
-        ref: Annotated[str | None, Field(description=_REF_DESCRIPTION)] = None,
     ) -> str:
         """Search a codebase with a natural-language or code query.
 
-        Pass a git URL or local path as `repo` to index it on demand; pass `ref` for a git branch or tag.
-        Indexes are cached for the session.
+        Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
         Use this to find where something is implemented, understand a library, or locate related code.
         """
-        source, source_ref = _resolve_source_ref(repo, ref, default_source, default_ref)
-        return await _search_codebase(cache, source, source_ref, query, mode, top_k)
+        try:
+            index = await _get_index(repo, default_source, cache)
+        except ValueError as exc:
+            return str(exc)
+        results = index.search(query, top_k=top_k, mode=mode)
+        if not results:
+            return "No results found."
+        return _format_results(f"Search results for: {query!r} (mode={mode})", results)
 
     @server.tool()
     async def find_related(
@@ -217,20 +94,30 @@ def create_server(
         line: Annotated[int, Field(description="Line number (1-indexed).")],
         repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
         top_k: Annotated[int, Field(description="Number of similar chunks to return.", ge=1)] = 5,
-        ref: Annotated[str | None, Field(description=_REF_DESCRIPTION)] = None,
     ) -> str:
         """Find code chunks semantically similar to a specific location in a file.
 
         Use after `search` to explore related implementations or callers.
         Pass file_path and line from a prior search result.
         """
-        source, source_ref = _resolve_source_ref(repo, ref, default_source, default_ref)
-        return await _find_related_code(cache, source, source_ref, file_path, line, top_k)
+        try:
+            index = await _get_index(repo, default_source, cache)
+        except ValueError as exc:
+            return str(exc)
+        chunk = _resolve_chunk(index.chunks, file_path, line)
+        if chunk is None:
+            return (
+                f"No chunk found at {file_path}:{line}. "
+                "Make sure the file is indexed and the line number is within a known chunk."
+            )
+        results = index.find_related(chunk, top_k=top_k)
+        if not results:
+            return f"No related chunks found for {file_path}:{line}."
+        return _format_results(f"Chunks related to {file_path}:{line}", results)
 
     @server.tool()
     async def find_duplicates(
         repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
-        ref: Annotated[str | None, Field(description=_REF_DESCRIPTION)] = None,
         top_k: Annotated[int, Field(description="Number of duplicate clusters to return.", ge=1)] = 5,
         candidate_k: Annotated[
             int,
@@ -265,27 +152,43 @@ def create_server(
         """Find duplicate-code clusters in a codebase.
 
         Use this to identify grouped duplicate implementations, copy-pasted logic, and refactoring candidates.
-        Pass a git URL or local path as `repo` to index it on demand; pass `ref` for a git branch or tag.
-        Indexes are cached for the session.
+        Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
         """
-        source, source_ref = _resolve_source_ref(repo, ref, default_source, default_ref)
-        return await _find_duplicate_code(
-            cache,
-            source,
-            source_ref,
-            top_k,
-            candidate_k,
-            language,
-            include_paths,
-            exclude_paths,
-            include_tests,
-            include_data,
-            include_scaffolding,
-            min_lines,
-            min_score,
-            min_structural_score,
-            min_cluster_size,
+        try:
+            index = await _get_index(repo, default_source, cache)
+        except ValueError as exc:
+            return str(exc)
+
+        options = duplicate_options_from_values(
+            top_k=top_k,
+            candidate_k=candidate_k,
+            language=language,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            include_data=include_data,
+            include_scaffolding=include_scaffolding,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            min_cluster_size=min_cluster_size,
         )
+        clusters = await asyncio.to_thread(
+            index.find_duplicates,
+            top_k=options.top_k,
+            candidate_k=options.candidate_k,
+            min_lines=options.min_lines,
+            min_score=options.min_score,
+            min_structural_score=options.min_structural_score,
+            min_cluster_size=options.min_cluster_size,
+            filter_languages=options.filter_languages,
+            include_paths=options.include_paths,
+            exclude_paths=options.exclude_paths,
+            include_tests=options.include_tests,
+            include_data=options.include_data,
+            include_scaffolding=options.include_scaffolding,
+        )
+        return _format_duplicate_search_result(clusters)
 
     return server
 
@@ -299,7 +202,7 @@ async def serve(path: str | None = None, ref: str | None = None, include_text_fi
         if not _is_git_url(path):
             await cache.start_watcher(path)
 
-    server = create_server(cache, default_source=path, default_ref=ref)
+    server = create_server(cache, default_source=path)
     await server.run_stdio_async()
 
 

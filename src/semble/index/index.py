@@ -6,7 +6,6 @@ import tempfile
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import numpy.typing as npt
@@ -15,49 +14,14 @@ from bm25s import BM25
 from semble.duplicates.clustering import cluster_duplicate_pairs
 from semble.duplicates.search import (
     DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-    DuplicateOptions,
     duplicate_options_from_values,
     find_duplicate_pairs,
 )
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
-from semble.path_filters import PathFilter
 from semble.search import search_bm25, search_hybrid, search_semantic
 from semble.stats import save_search_stats
 from semble.types import CallType, Chunk, DuplicateCluster, Encoder, IndexStats, SearchMode, SearchResult
-
-
-class _DuplicateOptionDefault:
-    """Sentinel wrapper that displays like the public default value."""
-
-    def __init__(self, value: object) -> None:
-        """Store the public default value for omitted keyword detection."""
-        self.value = value
-
-    def __repr__(self) -> str:
-        """Return the public default representation for introspection."""
-        return repr(self.value)
-
-
-def _duplicate_option_value(value: object) -> object:
-    """Return the public default value for an omitted duplicate option keyword."""
-    if isinstance(value, _DuplicateOptionDefault):
-        return value.value
-    return value
-
-
-_DEFAULT_DUPLICATE_TOP_K = _DuplicateOptionDefault(5)
-_DEFAULT_DUPLICATE_CANDIDATE_K = _DuplicateOptionDefault(12)
-_DEFAULT_DUPLICATE_MIN_LINES = _DuplicateOptionDefault(8)
-_DEFAULT_DUPLICATE_MIN_SCORE = _DuplicateOptionDefault(0.0)
-_DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = _DuplicateOptionDefault(DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE)
-_DEFAULT_DUPLICATE_MIN_CLUSTER_SIZE = _DuplicateOptionDefault(2)
-_DEFAULT_DUPLICATE_FILTER_LANGUAGES = _DuplicateOptionDefault(None)
-_DEFAULT_DUPLICATE_INCLUDE_PATHS = _DuplicateOptionDefault(None)
-_DEFAULT_DUPLICATE_EXCLUDE_PATHS = _DuplicateOptionDefault(None)
-_DEFAULT_DUPLICATE_INCLUDE_TESTS = _DuplicateOptionDefault(False)
-_DEFAULT_DUPLICATE_INCLUDE_DATA = _DuplicateOptionDefault(False)
-_DEFAULT_DUPLICATE_INCLUDE_SCAFFOLDING = _DuplicateOptionDefault(False)
 
 _GIT_CLONE_TIMEOUT = int(os.environ.get("SEMBLE_CLONE_TIMEOUT", 60))
 
@@ -234,24 +198,21 @@ class SembleIndex:
     def find_duplicates(
         self,
         *,
-        options: DuplicateOptions | None = None,
-        top_k: int = cast(int, _DEFAULT_DUPLICATE_TOP_K),
-        candidate_k: int = cast(int, _DEFAULT_DUPLICATE_CANDIDATE_K),
-        min_lines: int = cast(int, _DEFAULT_DUPLICATE_MIN_LINES),
-        min_score: float = cast(float, _DEFAULT_DUPLICATE_MIN_SCORE),
-        min_structural_score: float = cast(float, _DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE),
-        min_cluster_size: int = cast(int, _DEFAULT_DUPLICATE_MIN_CLUSTER_SIZE),
-        filter_languages: Sequence[str] | None = cast(Sequence[str] | None, _DEFAULT_DUPLICATE_FILTER_LANGUAGES),
-        include_paths: Sequence[str] | None = cast(Sequence[str] | None, _DEFAULT_DUPLICATE_INCLUDE_PATHS),
-        exclude_paths: Sequence[str] | None = cast(Sequence[str] | None, _DEFAULT_DUPLICATE_EXCLUDE_PATHS),
-        include_tests: bool = cast(bool, _DEFAULT_DUPLICATE_INCLUDE_TESTS),
-        include_data: bool = cast(bool, _DEFAULT_DUPLICATE_INCLUDE_DATA),
-        include_scaffolding: bool = cast(bool, _DEFAULT_DUPLICATE_INCLUDE_SCAFFOLDING),
+        top_k: int = 5,
+        candidate_k: int = 12,
+        min_lines: int = 8,
+        min_score: float = 0.0,
+        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size: int = 2,
+        filter_languages: Sequence[str] | None = None,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
+        include_tests: bool = False,
+        include_data: bool = False,
+        include_scaffolding: bool = False,
     ) -> list[DuplicateCluster]:
         """Return ranked duplicate-code clusters from indexed chunks.
 
-        :param options: Optional pre-built duplicate discovery options. Do not combine
-            this with duplicate option keyword arguments.
         :param top_k: Number of duplicate clusters to return.
         :param candidate_k: Number of semantic neighbors to inspect per eligible chunk.
         :param min_lines: Minimum content line count required for each side.
@@ -267,44 +228,21 @@ class SembleIndex:
         :param include_data: Whether static data/config chunks are eligible duplicate candidates.
         :param include_scaffolding: Whether import/header/attribute scaffolding contributes to duplicate discovery.
         :return: Ranked list of duplicate clusters, best match first.
-        :raises ValueError: If `options` is combined with duplicate option keyword arguments.
         """
-        duplicate_kwargs = {
-            "top_k": top_k,
-            "candidate_k": candidate_k,
-            "min_lines": min_lines,
-            "min_score": min_score,
-            "min_structural_score": min_structural_score,
-            "min_cluster_size": min_cluster_size,
-            "filter_languages": filter_languages,
-            "include_paths": include_paths,
-            "exclude_paths": exclude_paths,
-            "include_tests": include_tests,
-            "include_data": include_data,
-            "include_scaffolding": include_scaffolding,
-        }
-        if options is not None:
-            mixed = [
-                name for name, value in duplicate_kwargs.items() if not isinstance(value, _DuplicateOptionDefault)
-            ]
-            if mixed:
-                raise ValueError("Pass either options or duplicate option keyword arguments, not both.")
-            search_options = options
-        else:
-            search_options = duplicate_options_from_values(
-                top_k=cast(int, _duplicate_option_value(top_k)),
-                candidate_k=cast(int, _duplicate_option_value(candidate_k)),
-                min_lines=cast(int, _duplicate_option_value(min_lines)),
-                min_score=cast(float, _duplicate_option_value(min_score)),
-                min_structural_score=cast(float, _duplicate_option_value(min_structural_score)),
-                min_cluster_size=cast(int, _duplicate_option_value(min_cluster_size)),
-                filter_languages=cast(Sequence[str] | None, _duplicate_option_value(filter_languages)),
-                include_paths=cast(Sequence[str] | None, _duplicate_option_value(include_paths)),
-                exclude_paths=cast(Sequence[str] | None, _duplicate_option_value(exclude_paths)),
-                include_tests=cast(bool, _duplicate_option_value(include_tests)),
-                include_data=cast(bool, _duplicate_option_value(include_data)),
-                include_scaffolding=cast(bool, _duplicate_option_value(include_scaffolding)),
-            )
+        search_options = duplicate_options_from_values(
+            top_k=top_k,
+            candidate_k=candidate_k,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            min_cluster_size=min_cluster_size,
+            filter_languages=filter_languages,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            include_data=include_data,
+            include_scaffolding=include_scaffolding,
+        )
         if search_options.top_k <= 0:
             return []
 
@@ -326,43 +264,7 @@ class SembleIndex:
         for filename in filter_paths or []:
             selector.extend(self._file_mapping.get(filename, []))
 
-        if selector:
-            return np.unique(selector)
-        return np.array([], dtype=np.int_) if filter_languages or filter_paths else None
-
-    def _get_search_selector_vector(
-        self,
-        *,
-        filter_languages: list[str] | None = None,
-        filter_paths: list[str] | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
-    ) -> npt.NDArray[np.int_] | None:
-        """Create a search selector while keeping exact-file and scoped path filters distinct."""
-        if filter_paths is not None and (include_paths is not None or exclude_paths is not None):
-            raise ValueError(
-                "Use either filter_paths for exact indexed file paths or "
-                "include_paths/exclude_paths for file-or-directory scopes, not both."
-            )
-
-        if include_paths is None and exclude_paths is None:
-            return self._get_selector_vector(filter_languages, filter_paths)
-
-        eligible = set(range(len(self.chunks)))
-        if filter_languages:
-            language_indices: set[int] = set()
-            for language in filter_languages:
-                language_indices.update(self._language_mapping.get(language, []))
-            eligible &= language_indices
-
-        path_filter = PathFilter(include_paths, exclude_paths)
-        scoped_indices = {
-            index
-            for index, chunk in enumerate(self.chunks)
-            if path_filter.includes(chunk.file_path)
-        }
-        eligible &= scoped_indices
-        return np.array(sorted(eligible), dtype=np.int_)
+        return np.unique(selector) if selector else None
 
     def search(
         self,
@@ -372,8 +274,6 @@ class SembleIndex:
         alpha: float | None = None,
         filter_languages: list[str] | None = None,
         filter_paths: list[str] | None = None,
-        include_paths: list[str] | None = None,
-        exclude_paths: list[str] | None = None,
     ) -> list[SearchResult]:
         """Search the index and return the top-k most relevant chunks.
 
@@ -385,29 +285,16 @@ class SembleIndex:
             are applied regardless. ``None`` auto-detects from query type.
         :param filter_languages: Optional list of language codes; if set, only chunks in
             these languages are returned.
-        :param filter_paths: Optional list of exact repo-relative indexed file paths; if
-            set, only chunks from these files are returned. This legacy exact-file filter
-            cannot be combined with include_paths or exclude_paths.
-        :param include_paths: Optional repo-relative file or directory scopes to include.
-            Uses directory-scope semantics and intersects with filter_languages.
-        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
-            Uses directory-scope semantics and intersects with filter_languages.
+        :param filter_paths: Optional list of repo-relative file paths; if set, only
+            chunks from these files are returned.
         :return: Ranked list of :class:`SearchResult` objects, best match first.
-        :raises ValueError: If `mode` is not a recognised search strategy, or if exact
-            filter_paths are combined with scoped include_paths/exclude_paths.
+        :raises ValueError: If `mode` is not a recognised search strategy.
         """
         bm25_index, semantic_index = self._bm25_index, self._semantic_index
         if not self.chunks or not query.strip():
             return []
 
-        selector = self._get_search_selector_vector(
-            filter_languages=filter_languages,
-            filter_paths=filter_paths,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-        )
-        if selector is not None and len(selector) == 0:
-            return []
+        selector = self._get_selector_vector(filter_languages, filter_paths)
 
         if mode == SearchMode.BM25:
             results = search_bm25(query, bm25_index, self.chunks, top_k, selector=selector)

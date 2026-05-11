@@ -34,6 +34,7 @@ def create_index_from_path(
     :return: A bm25 index, vicinity index and list of chunks
     """
     extensions = filter_extensions(extensions, include_text_files=include_text_files)
+
     chunks: list[Chunk] = []
 
     for file_path in walk_files(path, extensions, ignore):

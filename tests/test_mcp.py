@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from semble import DuplicateOptions
 from semble.mcp import _CACHE_MAX_SIZE, _IndexCache, create_server, serve
 from semble.types import (
     Chunk,
@@ -318,88 +317,22 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
         )
 
     assert "Duplicate clusters" in _tool_text(result)
-    mock_get.assert_awaited_once_with("/some/path", ref=None)
+    mock_get.assert_awaited_once_with("/some/path")
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
-        options=DuplicateOptions(
-            top_k=7,
-            candidate_k=19,
-            filter_languages=["python"],
-            include_paths=["src", "lib"],
-            exclude_paths=["src/generated", "tests"],
-            include_tests=True,
-            include_data=True,
-            include_scaffolding=True,
-            min_lines=4,
-            min_score=0.25,
-            min_structural_score=0.42,
-            min_cluster_size=3,
-        ),
+        top_k=7,
+        candidate_k=19,
+        min_lines=4,
+        min_score=0.25,
+        min_structural_score=0.42,
+        min_cluster_size=3,
+        filter_languages=["python"],
+        include_paths=["src", "lib"],
+        exclude_paths=["src/generated", "tests"],
+        include_tests=True,
+        include_data=True,
+        include_scaffolding=True,
     )
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("tool", "args", "index_method", "index_return", "index_chunks"),
-    [
-        (
-            "search",
-            {"query": "foo", "repo": "https://github.com/x/y", "ref": "feature"},
-            "search",
-            [],
-            None,
-        ),
-        (
-            "find_related",
-            {
-                "file_path": "src/foo.py",
-                "line": 1,
-                "repo": "https://github.com/x/y",
-                "ref": "feature",
-            },
-            "find_related",
-            [],
-            [make_chunk("def foo(): pass", "src/foo.py")],
-        ),
-        (
-            "find_duplicates",
-            {"repo": "https://github.com/x/y", "ref": "feature"},
-            "find_duplicates",
-            [],
-            None,
-        ),
-    ],
-)
-async def test_tools_pass_explicit_ref_to_cache(
-    cache: _IndexCache,
-    tool: str,
-    args: dict[str, Any],
-    index_method: str,
-    index_return: list[SearchResult | DuplicateCluster],
-    index_chunks: list[Chunk] | None,
-) -> None:
-    """MCP tools pass explicit git refs into the cache lookup."""
-    fake_index = MagicMock()
-    getattr(fake_index, index_method).return_value = index_return
-    if index_chunks is not None:
-        fake_index.chunks = index_chunks
-    with patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get:
-        server = create_server(cache)
-        await server.call_tool(tool, args)
-
-    mock_get.assert_awaited_once_with("https://github.com/x/y", ref="feature")
-
-
-@pytest.mark.anyio
-async def test_default_source_uses_default_ref(cache: _IndexCache) -> None:
-    """Default MCP tool calls keep the startup ref attached to the default source."""
-    fake_index = MagicMock()
-    fake_index.search.return_value = []
-    with patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get:
-        server = create_server(cache, default_source="https://github.com/x/y", default_ref="main")
-        await server.call_tool("search", {"query": "foo"})
-
-    mock_get.assert_awaited_once_with("https://github.com/x/y", ref="main")
 
 
 @pytest.mark.anyio
@@ -418,24 +351,6 @@ async def test_serve_runs_stdio(tmp_path: Path, with_path: bool) -> None:
 
 
 @pytest.mark.anyio
-async def test_serve_preserves_default_git_ref() -> None:
-    """serve() pre-indexes and exposes the same default git ref to later tool calls."""
-    fake_server = MagicMock()
-    fake_server.run_stdio_async = AsyncMock()
-    with (
-        patch("semble.mcp.load_model", return_value=MagicMock(spec=Encoder)),
-        patch("semble.mcp.SembleIndex.from_git", return_value=MagicMock()),
-        patch("semble.mcp.create_server", return_value=fake_server) as mock_create_server,
-    ):
-        await serve("https://github.com/x/y", ref="feature")
-
-    mock_create_server.assert_called_once()
-    assert mock_create_server.call_args.kwargs["default_source"] == "https://github.com/x/y"
-    assert mock_create_server.call_args.kwargs["default_ref"] == "feature"
-    fake_server.run_stdio_async.assert_awaited_once()
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("repo", "tool", "extra_args"),
     [
@@ -444,8 +359,18 @@ async def test_serve_preserves_default_git_ref() -> None:
         ("git@github.com:org/repo", "search", {"query": "foo"}),
         ("file:///home/user/secret", "find_related", {"file_path": "src/foo.py", "line": 1}),
         ("ssh://internal-host/repo", "find_related", {"file_path": "src/foo.py", "line": 1}),
+        ("file:///home/user/secret", "find_duplicates", {}),
+        ("ssh://internal-host/repo", "find_duplicates", {}),
     ],
-    ids=["file_search", "ssh_search", "scp_search", "file_find_related", "ssh_find_related"],
+    ids=[
+        "file_search",
+        "ssh_search",
+        "scp_search",
+        "file_find_related",
+        "ssh_find_related",
+        "file_find_duplicates",
+        "ssh_find_duplicates",
+    ],
 )
 async def test_tool_rejects_unsafe_repo(
     cache: _IndexCache, repo: str, tool: str, extra_args: dict[str, object]

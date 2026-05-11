@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from semble import DuplicateOptions
+from semble import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.cli import _CLAUDE_FILE_PATH, _cli_main, _run_init, main
 from semble.types import DuplicateCluster, DuplicateMatch, DuplicatePair, DuplicateSignals, SearchMode, SearchResult
 from tests.conftest import make_chunk
@@ -162,20 +162,18 @@ def test_cli_find_duplicates_maps_options(
         include_text_files=False,
     )
     fake_index.find_duplicates.assert_called_once_with(
-        options=DuplicateOptions(
-            top_k=7,
-            candidate_k=19,
-            filter_languages=["python"],
-            include_paths=["src", "lib"],
-            exclude_paths=["tests", "src/generated"],
-            include_tests=True,
-            include_data=True,
-            include_scaffolding=True,
-            min_lines=4,
-            min_score=0.25,
-            min_structural_score=0.42,
-            min_cluster_size=3,
-        )
+        top_k=7,
+        candidate_k=19,
+        min_lines=4,
+        min_score=0.25,
+        min_structural_score=0.42,
+        min_cluster_size=3,
+        filter_languages=["python"],
+        include_paths=["src", "lib"],
+        exclude_paths=["tests", "src/generated"],
+        include_tests=True,
+        include_data=True,
+        include_scaffolding=True,
     )
     out = capsys.readouterr().out
     assert "Duplicate clusters" in out
@@ -198,7 +196,20 @@ def test_cli_find_duplicates_empty_state(
         "/some/path",
         include_text_files=False,
     )
-    fake_index.find_duplicates.assert_called_once_with(options=DuplicateOptions())
+    fake_index.find_duplicates.assert_called_once_with(
+        top_k=5,
+        candidate_k=12,
+        min_lines=8,
+        min_score=0.0,
+        min_structural_score=DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size=2,
+        filter_languages=None,
+        include_paths=None,
+        exclude_paths=None,
+        include_tests=False,
+        include_data=False,
+        include_scaffolding=False,
+    )
     assert "No duplicate clusters found." in capsys.readouterr().out
 
 

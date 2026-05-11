@@ -7,8 +7,8 @@ from pathlib import Path
 
 from model2vec.utils import get_package_extras
 
-from semble.duplicates.search import duplicate_options_from_values
-from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, DuplicateOptions, SembleIndex
+from semble.duplicates.search import DuplicateOptions, duplicate_options_from_values
+from semble.index import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE, SembleIndex
 from semble.stats import format_savings_report
 from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
 
@@ -202,7 +202,24 @@ def run_find_duplicates(args: argparse.Namespace) -> None:
     """Run the find-duplicates CLI command."""
     options = _duplicate_options_from_args(args)
     index = _load_index(args)
-    print(_format_duplicate_search_result(index.find_duplicates(options=options)))
+    print(
+        _format_duplicate_search_result(
+            index.find_duplicates(
+                top_k=options.top_k,
+                candidate_k=options.candidate_k,
+                min_lines=options.min_lines,
+                min_score=options.min_score,
+                min_structural_score=options.min_structural_score,
+                min_cluster_size=options.min_cluster_size,
+                filter_languages=options.filter_languages,
+                include_paths=options.include_paths,
+                exclude_paths=options.exclude_paths,
+                include_tests=options.include_tests,
+                include_data=options.include_data,
+                include_scaffolding=options.include_scaffolding,
+            )
+        )
+    )
 
 
 def _load_index(args: argparse.Namespace) -> SembleIndex:
