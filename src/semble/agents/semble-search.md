@@ -24,11 +24,12 @@ Use `semble find-duplicates` to identify candidate duplicate implementations, co
 semble find-duplicates ./my-project
 semble find-duplicates ./my-project --language python
 semble find-duplicates ./my-project --include src --exclude tests --exclude src/generated
+semble find-duplicates ./my-project --include src/app --include packages/core
 semble find-duplicates ./my-project --min-cluster-size 3
 semble find-duplicates ./my-project --include-tests
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips tests, static data/config, and scaffolding-only chunks by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when those files matter.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips tests, static data/config, and scaffolding-only chunks by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include` to narrow duplicate discovery to one or more file/directory scopes. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when duplicates in tests, fixtures/config, or boilerplate matter.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
