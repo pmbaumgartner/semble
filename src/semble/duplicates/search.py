@@ -22,58 +22,22 @@ from semble.types import Chunk, DuplicateMatch, DuplicatePair
 DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(slots=True)
 class DuplicateOptions:
-    """Normalized options for duplicate-code discovery."""
+    """Options for duplicate-code discovery."""
 
-    top_k: int
-    candidate_k: int
-    min_lines: int
-    min_score: float
-    min_structural_score: float
-    min_cluster_size: int
-    filter_languages: tuple[str, ...] | None
-    include_paths: tuple[str, ...] | None
-    exclude_paths: tuple[str, ...] | None
-    include_tests: bool
-    include_data: bool
-    include_scaffolding: bool
-
-    def __init__(
-        self,
-        *,
-        top_k: int = 5,
-        candidate_k: int = 12,
-        min_lines: int = 8,
-        min_score: float = 0.0,
-        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
-        min_cluster_size: int = 2,
-        filter_languages: Sequence[str] | None = None,
-        include_paths: Sequence[str] | None = None,
-        exclude_paths: Sequence[str] | None = None,
-        include_tests: bool = False,
-        include_data: bool = False,
-        include_scaffolding: bool = False,
-    ) -> None:
-        """Create normalized duplicate discovery options."""
-        _validate_at_least("top_k", top_k, 0)
-        _validate_at_least("candidate_k", candidate_k, 1)
-        _validate_at_least("min_lines", min_lines, 1)
-        _validate_score("min_score", min_score)
-        _validate_score("min_structural_score", min_structural_score)
-        _validate_at_least("min_cluster_size", min_cluster_size, 2)
-        object.__setattr__(self, "top_k", top_k)
-        object.__setattr__(self, "candidate_k", candidate_k)
-        object.__setattr__(self, "min_lines", min_lines)
-        object.__setattr__(self, "min_score", min_score)
-        object.__setattr__(self, "min_structural_score", min_structural_score)
-        object.__setattr__(self, "min_cluster_size", min_cluster_size)
-        object.__setattr__(self, "filter_languages", _tuple_or_none(filter_languages))
-        object.__setattr__(self, "include_paths", _tuple_or_none(include_paths))
-        object.__setattr__(self, "exclude_paths", _tuple_or_none(exclude_paths))
-        object.__setattr__(self, "include_tests", include_tests)
-        object.__setattr__(self, "include_data", include_data)
-        object.__setattr__(self, "include_scaffolding", include_scaffolding)
+    top_k: int = 5
+    candidate_k: int = 12
+    min_lines: int = 8
+    min_score: float = 0.0
+    min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
+    min_cluster_size: int = 2
+    filter_languages: Sequence[str] | None = None
+    include_paths: Sequence[str] | None = None
+    exclude_paths: Sequence[str] | None = None
+    include_tests: bool = False
+    include_data: bool = False
+    include_scaffolding: bool = False
 
 
 def duplicate_options_from_values(
@@ -143,24 +107,6 @@ def find_duplicate_pairs(
         )
 
     return sorted(pairs.values(), key=_duplicate_sort_key)
-
-
-def _tuple_or_none(values: Sequence[str] | None) -> tuple[str, ...] | None:
-    if not values:
-        return None
-    return tuple(values)
-
-
-def _validate_at_least(name: str, value: int, minimum: int) -> None:
-    """Validate that an integer option is at least a minimum value."""
-    if value < minimum:
-        raise ValueError(f"{name} must be >= {minimum}.")
-
-
-def _validate_score(name: str, value: float) -> None:
-    """Validate that a score threshold is in the inclusive 0..1 range."""
-    if not 0.0 <= value <= 1.0:
-        raise ValueError(f"{name} must be between 0.0 and 1.0.")
 
 
 def _eligible_duplicate_features(
