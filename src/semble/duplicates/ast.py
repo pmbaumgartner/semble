@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
+from semble.chunking.core import get_parser_for_language, is_supported_language
 from semble.duplicates.tokens import _NGRAM_SIZE, _ngrams
 
 _AST_NODE_SPLIT_RE = re.compile(r"[^a-z0-9]+")
@@ -17,32 +17,6 @@ _PARSER_LANGUAGE_ALIASES = {
     "shell": "bash",
     "ts": "typescript",
 }
-_PARSER_LANGUAGES = frozenset(
-    {
-        "bash",
-        "c",
-        "cpp",
-        "csharp",
-        "dart",
-        "elixir",
-        "go",
-        "haskell",
-        "java",
-        "javascript",
-        "kotlin",
-        "lua",
-        "php",
-        "python",
-        "ruby",
-        "rust",
-        "scala",
-        "sql",
-        "swift",
-        "typescript",
-        "zig",
-    }
-)
-
 _IDENTIFIER_NODE_TYPES = frozenset(
     {
         "field_identifier",
@@ -500,24 +474,10 @@ def _parser_language_for_chunk(language: str | None) -> str | None:
         return None
 
     normalized = _PARSER_LANGUAGE_ALIASES.get(language.lower(), language.lower())
-    if normalized in _PARSER_LANGUAGES:
+    if is_supported_language(normalized):
         return normalized
     return None
 
 
 def _parser_for_language(language: str) -> Any | None:
-    return _load_parser_for_language(language)
-
-
-@lru_cache(maxsize=None)
-def _load_parser_for_language(language: str) -> Any | None:
-    try:
-        from tree_sitter_language_pack import get_parser
-    except ImportError:
-        return None
-
-    try:
-        # Runtime allowlisting and exception handling cover unsupported parser names.
-        return get_parser(language)  # type: ignore[arg-type]
-    except Exception:
-        return None
+    return get_parser_for_language(language)
