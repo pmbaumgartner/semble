@@ -176,7 +176,7 @@ Use `semble find-related` to discover code similar to a known location (pass `fi
 semble find-related src/auth.py 42 ./my-project
 ​```
 
-Use `semble find-duplicates` to identify grouped duplicate implementations, copy-pasted logic, and refactoring candidates:
+Use `semble find-duplicates` to identify candidate duplicate implementations, copy-pasted logic, and refactoring opportunities:
 
 ​```bash
 semble find-duplicates ./my-project
@@ -186,7 +186,7 @@ semble find-duplicates ./my-project --min-cluster-size 3
 semble find-duplicates ./my-project --include-tests
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns clusters with at least two chunks and skips tests, static data/config, and scaffolding-only chunks by default. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when those files matter.
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips tests, static data/config, and scaffolding-only chunks by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include-tests`, `--include-data`, or `--include-scaffolding` when those files matter.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -195,7 +195,7 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 1. Start with `semble search` to find relevant chunks.
 2. Inspect full files only when the returned chunk is not enough context.
 3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use `semble find-duplicates` when looking for grouped duplicate implementations, copy-pasted logic, or refactoring candidates.
+4. Use `semble find-duplicates` when looking for candidate duplicate implementations, copy-pasted logic, or refactoring opportunities; verify clusters before changing code.
 5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
 ```
 

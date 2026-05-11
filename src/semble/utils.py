@@ -6,6 +6,12 @@ from semble.types import Chunk, DuplicateCluster, DuplicatePair, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
+_DUPLICATE_SIGNAL_LEGEND = (
+    "Signals are 0..1 similarities; higher means more alike, not confirmed duplication. score=ranking blend.",
+    "semantic=embedding; structural=weighted tokens/AST blend; tokens=token n-grams; "
+    "ast_type/ast_shape=AST overlap when available.",
+)
+_MAX_DUPLICATE_PAIRS_SHOWN = 5
 
 
 def _is_git_url(path: str) -> bool:
@@ -42,6 +48,8 @@ def _format_results(header: str, results: list[SearchResult]) -> str:
 def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) -> str:
     """Render DuplicateCluster objects as numbered grouped code blocks."""
     lines: list[str] = [header, ""]
+    if clusters:
+        lines.extend([*_DUPLICATE_SIGNAL_LEGEND, ""])
     for i, cluster in enumerate(clusters, 1):
         strongest = cluster.pairs[0]
 
@@ -53,18 +61,18 @@ def _format_duplicate_clusters(header: str, clusters: list[DuplicateCluster]) ->
         for member in cluster.members:
             lines.append(f"- {member.location}")
         lines.append("")
-        lines.append(f"Strongest pair: {strongest.left.location} <-> {strongest.right.location}")
-        lines.append(" ".join(_duplicate_signal_parts(strongest)))
+        shown_pairs = cluster.pairs[:_MAX_DUPLICATE_PAIRS_SHOWN]
+        lines.append("Top pairs:")
+        for pair in shown_pairs:
+            lines.append(f"- {pair.left.location} <-> {pair.right.location}  [{_duplicate_pair_score_parts(pair)}]")
+        unlisted_pairs = len(cluster.pairs) - len(shown_pairs)
+        if unlisted_pairs:
+            lines.append(f"Pairs not shown: {unlisted_pairs}")
         lines.append("")
-        if len(cluster.pairs) > 1:
-            lines.append("Additional pairs:")
-            for pair in cluster.pairs[1:]:
-                lines.append(f"- {pair.left.location} <-> {pair.right.location}  [score={pair.score:.3f}]")
-            lines.append("")
-        lines.append("Left:")
+        lines.append("Strongest pair left:")
         _append_fenced_block(lines, strongest.left.content)
         lines.append("")
-        lines.append("Right:")
+        lines.append("Strongest pair right:")
         _append_fenced_block(lines, strongest.right.content)
         lines.append("")
     return "\n".join(lines)
@@ -92,8 +100,13 @@ def _duplicate_signal_parts(result: DuplicatePair) -> list[str]:
     return parts
 
 
+def _duplicate_pair_score_parts(result: DuplicatePair) -> str:
+    """Return compact duplicate pair score labels."""
+    return " ".join([f"score={result.score:.3f}", *_duplicate_signal_parts(result)])
+
+
 def _append_fenced_block(lines: list[str], content: str) -> None:
     """Append one plain fenced code block to a line buffer."""
     lines.append("```")
-    lines.append(content.strip())
+    lines.append(content.strip("\r\n"))
     lines.append("```")

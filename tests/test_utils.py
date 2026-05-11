@@ -28,6 +28,16 @@ def _duplicate_cluster(*, extra_pair: bool = False) -> DuplicateCluster:
     return DuplicateCluster(members=members, pairs=pairs)
 
 
+def _multi_pair_cluster(pair_count: int) -> DuplicateCluster:
+    chunks = tuple(make_chunk(f"def item_{i}():\n    return {i}", f"src/item{i}.py") for i in range(pair_count + 1))
+    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
+    pairs = tuple(
+        DuplicatePair(left=chunks[i], right=chunks[i + 1], score=0.9 - i * 0.01, signals=signals)
+        for i in range(pair_count)
+    )
+    return DuplicateCluster(members=chunks, pairs=pairs)
+
+
 def test_format_duplicate_clusters_empty() -> None:
     """Empty duplicate clusters render only the header."""
     assert _format_duplicate_clusters("Duplicate clusters", []) == "Duplicate clusters\n"
@@ -38,20 +48,43 @@ def test_format_duplicate_clusters_summary_members_and_strongest_pair() -> None:
     out = _format_duplicate_clusters("Duplicate clusters", [_duplicate_cluster()])
 
     assert "Duplicate clusters" in out
+    assert "Signals are 0..1 similarities" in out
+    assert "semantic=embedding; structural=weighted tokens/AST blend" in out
     assert "score=0.840, members=2, pairs=1" in out
     assert "- src/left.py:1-2" in out
     assert "- src/right.py:1-2" in out
-    assert "Strongest pair: src/left.py:1-2 <-> src/right.py:1-2" in out
-    assert "semantic=0.900 structural=0.800 tokens=0.700" in out
+    assert "Top pairs:" in out
+    assert "- src/left.py:1-2 <-> src/right.py:1-2  [score=0.840 semantic=0.900 structural=0.800 tokens=0.700]" in out
     assert "def left():" in out
     assert "def right():" in out
     assert out.count("```") == 4
 
 
-def test_format_duplicate_clusters_lists_additional_pairs_compactly() -> None:
-    """Additional cluster pairs are listed without extra full snippets."""
+def test_format_duplicate_clusters_lists_top_pairs_compactly() -> None:
+    """Cluster pairs are listed with score signals and without extra full snippets."""
     out = _format_duplicate_clusters("Duplicate clusters", [_duplicate_cluster(extra_pair=True)])
 
-    assert "Additional pairs:" in out
-    assert "- src/right.py:1-2 <-> src/third.py:1-2  [score=0.750]" in out
+    assert "Top pairs:" in out
+    assert "- src/right.py:1-2 <-> src/third.py:1-2  [score=0.750 semantic=0.900" in out
     assert "def third():" not in out
+
+
+def test_format_duplicate_clusters_caps_top_pairs() -> None:
+    """Large clusters show only the strongest five pairs and a hidden-pair count."""
+    out = _format_duplicate_clusters("Duplicate clusters", [_multi_pair_cluster(6)])
+
+    assert sum(line.startswith("- src/item") and "  [score=" in line for line in out.splitlines()) == 5
+    assert "Pairs not shown: 1" in out
+    assert "- src/item5.py:1-2 <-> src/item6.py:1-2" not in out
+
+
+def test_format_duplicate_clusters_preserves_first_line_indentation() -> None:
+    """Fenced duplicate snippets keep leading indentation on the first line."""
+    left = make_chunk("    def left():\n        return 1\n", "src/left.py")
+    right = make_chunk("    def right():\n        return 1\n", "src/right.py")
+    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
+    pair = DuplicatePair(left=left, right=right, score=0.84, signals=signals)
+    out = _format_duplicate_clusters("Duplicate clusters", [DuplicateCluster(members=(left, right), pairs=(pair,))])
+
+    assert "\n```\n    def left():\n        return 1\n```\n" in out
+    assert "\n```\n    def right():\n        return 1\n```\n" in out
