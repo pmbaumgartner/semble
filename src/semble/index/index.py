@@ -19,7 +19,7 @@ from semble.duplicates.search import (
     duplicate_options_from_values,
     find_duplicate_pairs,
 )
-from semble.index.create import IndexBuildOptions, build_index_from_path
+from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
 from semble.path_filters import PathFilter
 from semble.search import search_bm25, search_hybrid, search_semantic
@@ -148,17 +148,22 @@ class SembleIndex:
         :raises NotADirectoryError: If `path` exists but is not a directory.
         """
         model = model or load_model()
-        options = IndexBuildOptions(
-            extensions=extensions,
-            ignore=ignore,
-            include_text_files=include_text_files,
-        )
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
         if not path.is_dir():
             raise NotADirectoryError(f"Path is not a directory: {path}")
-        return cls._from_resolved_path(path.resolve(), model, options)
+        path = path.resolve()
+        bm25, vicinity, chunks = create_index_from_path(
+            path,
+            model=model,
+            extensions=extensions,
+            ignore=ignore,
+            include_text_files=include_text_files,
+            display_root=path,
+        )
+
+        return SembleIndex(model, bm25, vicinity, chunks, root=path)
 
     @classmethod
     def from_git(
@@ -201,23 +206,16 @@ class SembleIndex:
                 raise RuntimeError(f"git clone failed for {url!r}:\n{result.stderr.strip()}")
             model = model or load_model()
             resolved_path = Path(tmp_dir).resolve()
-            options = IndexBuildOptions(
+            bm25, vicinity, chunks = create_index_from_path(
+                resolved_path,
+                model=model,
                 extensions=extensions,
                 ignore=ignore,
                 include_text_files=include_text_files,
+                display_root=resolved_path,
             )
-            return cls._from_resolved_path(resolved_path, model, options)
 
-    @classmethod
-    def _from_resolved_path(
-        cls,
-        path: Path,
-        model: Encoder,
-        options: IndexBuildOptions,
-    ) -> SembleIndex:
-        """Create a SembleIndex from a resolved directory and shared build options."""
-        built = build_index_from_path(path, model=model, options=options, display_root=path)
-        return cls(model, built.bm25, built.semantic, built.chunks, root=path)
+            return SembleIndex(model, bm25, vicinity, chunks, root=resolved_path)
 
     def find_related(self, source: Chunk | SearchResult, *, top_k: int = 5) -> list[SearchResult]:
         """Return chunks semantically similar to the given chunk or search result.
