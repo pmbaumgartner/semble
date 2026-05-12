@@ -3,7 +3,6 @@ import pytest
 import semble.duplicates.ast as duplicate_ast
 from semble.duplicates.ast import (
     _normalize_ast_label,
-    _parser_for_language,
     _parser_language_for_chunk,
 )
 from semble.duplicates.clustering import (
@@ -21,31 +20,7 @@ from semble.duplicates.scoring import (
 from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.duplicates.tokens import _jaccard
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals
-from tests.conftest import make_chunk
-
-
-def _duplicate_result(
-    left: Chunk,
-    right: Chunk,
-    *,
-    score: float = 0.9,
-    semantic_score: float | None = None,
-    structural_score: float | None = None,
-) -> DuplicatePair:
-    semantic_score = score if semantic_score is None else semantic_score
-    structural_score = score if structural_score is None else structural_score
-    return DuplicatePair(
-        left=left,
-        right=right,
-        score=score,
-        signals=DuplicateSignals(
-            semantic_score=semantic_score,
-            structural_score=structural_score,
-            token_jaccard=structural_score,
-        ),
-        left_content=left.content,
-        right_content=right.content,
-    )
+from tests.conftest import make_chunk, make_duplicate_pair, require_parsers
 
 
 def _score_chunks(left: Chunk, right: Chunk, *, semantic_score: float) -> DuplicateSignals:
@@ -137,8 +112,7 @@ def test_empty_or_comment_only_fingerprints_are_not_perfect_matches() -> None:
 
 def test_score_duplicate_pair_populates_ast_signals_when_parser_is_available() -> None:
     """Parser-backed chunks include AST type and shape signals."""
-    if _parser_for_language("python") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("python")
 
     left = make_chunk(
         """\
@@ -171,8 +145,7 @@ def invoice_amount(products):
 
 def test_structural_score_uses_weighted_ast_blend_when_available() -> None:
     """Structural score blends token, AST type, and AST shape signals."""
-    if _parser_for_language("python") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("python")
 
     left = make_chunk(
         """\
@@ -225,8 +198,7 @@ def test_score_duplicate_features_reuses_precomputed_features() -> None:
 
 def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_available() -> None:
     """Comment/string-only chunks are ineligible when parser-backed AST counting is available."""
-    if _parser_for_language("python") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("python")
 
     docstring = duplicate_features(make_chunk('"""Only documentation."""', "docs.py"))
     comment = duplicate_features(make_chunk("# Only a comment", "comment.py"))
@@ -243,8 +215,7 @@ def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_availabl
 
 def test_duplicate_features_detect_static_data_chunks_when_parser_is_available() -> None:
     """Literal/container data chunks are ineligible by default and opt-in eligible."""
-    if _parser_for_language("python") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("python")
 
     data = duplicate_features(
         make_chunk(
@@ -283,8 +254,7 @@ def total(items):
 
 def test_duplicate_features_detect_scalar_config_assignments_when_parser_is_available() -> None:
     """Scalar assignment-only config chunks are static data even without containers."""
-    if _parser_for_language("python") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("python")
 
     config = duplicate_features(
         make_chunk(
@@ -308,20 +278,18 @@ SHORT_DATE_FORMAT = "j M Y"
 
 def test_duplicate_features_detect_scaffolding_chunks_when_parser_is_available() -> None:
     """Import/header/attribute scaffolding chunks are ineligible by default and opt-in eligible."""
-    if _parser_for_language("rust") is None or _parser_for_language("java") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("rust", "java")
 
     rust_attributes = duplicate_features(
-        Chunk(
+        make_chunk(
             "#![allow(clippy::too_many_lines, clippy::missing_errors_doc)]\n",
             "lib.rs",
-            1,
-            1,
-            "rust",
+            end_line=1,
+            language="rust",
         )
     )
     java_imports = duplicate_features(
-        Chunk(
+        make_chunk(
             """\
 package org.junit.jupiter.api.condition;
 
@@ -330,22 +298,20 @@ import java.lang.annotation.Documented;
 import org.apiguardian.api.API;
 """,
             "Example.java",
-            1,
-            5,
-            "java",
+            end_line=5,
+            language="java",
         )
     )
     behavior = duplicate_features(
-        Chunk(
+        make_chunk(
             """\
 fn add(a: i32, b: i32) -> i32 {
     return a + b;
 }
 """,
             "lib.rs",
-            1,
-            3,
-            "rust",
+            end_line=3,
+            language="rust",
         )
     )
 
@@ -363,11 +329,10 @@ fn add(a: i32, b: i32) -> i32 {
 
 def test_duplicate_features_keep_declarations_with_scaffolding_when_parser_is_available() -> None:
     """Declarations remain eligible even when they have scaffolding annotations."""
-    if _parser_for_language("java") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("java")
 
     declaration = duplicate_features(
-        Chunk(
+        make_chunk(
             """\
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
@@ -376,9 +341,8 @@ public @interface DisabledOnJre {
 }
 """,
             "DisabledOnJre.java",
-            1,
-            5,
-            "java",
+            end_line=5,
+            language="java",
         )
     )
 
@@ -390,8 +354,7 @@ public @interface DisabledOnJre {
 
 def test_duplicate_features_strip_scaffolding_from_mixed_chunks_when_requested() -> None:
     """Mixed chunks can be scored without import/header scaffolding."""
-    if _parser_for_language("python") is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_parsers("python")
 
     content = """\
 import alpha
@@ -404,7 +367,7 @@ import zeta
 def build_user():
     return alpha.load_user()
 """
-    chunk = Chunk(content, "example.py", 1, len(content.splitlines()), "python")
+    chunk = make_chunk(content, "example.py", end_line=len(content.splitlines()))
 
     full = duplicate_features(chunk, include_scaffolding=True)
     stripped = duplicate_features(chunk, include_scaffolding=False)
@@ -436,8 +399,8 @@ def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch:
 
 def test_score_duplicate_pair_falls_back_for_unsupported_language() -> None:
     """Unsupported languages use token-only duplicate scoring."""
-    left = Chunk("def add(a, b):\n    return a + b", "left.txt", 1, 2, "text")
-    right = Chunk("def plus(x, y):\n    return x + y", "right.txt", 1, 2, "text")
+    left = make_chunk("def add(a, b):\n    return a + b", "left.txt", language="text")
+    right = make_chunk("def plus(x, y):\n    return x + y", "right.txt", language="text")
 
     signals = _score_chunks(left, right, semantic_score=0.9)
 
@@ -492,17 +455,38 @@ def test_duplicate_score_uses_documented_blend() -> None:
 
 def test_cluster_duplicate_pairs_groups_connected_components() -> None:
     """Connected duplicate pairs become one cluster per component."""
-    a = Chunk("a", "src/a.py", 1, 2, "python")
-    b = Chunk("b", "src/b.py", 1, 2, "python")
-    c = Chunk("c", "src/c.py", 1, 2, "python")
-    d = Chunk("d", "src/d.py", 1, 2, "python")
-    e = Chunk("e", "src/e.py", 1, 2, "python")
+    a = make_chunk("a", "src/a.py", end_line=2)
+    b = make_chunk("b", "src/b.py", end_line=2)
+    c = make_chunk("c", "src/c.py", end_line=2)
+    d = make_chunk("d", "src/d.py", end_line=2)
+    e = make_chunk("e", "src/e.py", end_line=2)
 
     clusters = cluster_duplicate_pairs(
         [
-            _duplicate_result(b, c, score=0.8),
-            _duplicate_result(d, e, score=0.7),
-            _duplicate_result(a, b, score=0.9),
+            make_duplicate_pair(
+                left=b,
+                right=c,
+                score=0.8,
+                semantic_score=0.8,
+                structural_score=0.8,
+                token_jaccard=0.8,
+            ),
+            make_duplicate_pair(
+                left=d,
+                right=e,
+                score=0.7,
+                semantic_score=0.7,
+                structural_score=0.7,
+                token_jaccard=0.7,
+            ),
+            make_duplicate_pair(
+                left=a,
+                right=b,
+                score=0.9,
+                semantic_score=0.9,
+                structural_score=0.9,
+                token_jaccard=0.9,
+            ),
         ]
     )
 
@@ -514,10 +498,18 @@ def test_cluster_duplicate_pairs_groups_connected_components() -> None:
 
 def test_cluster_duplicate_pairs_keeps_size_two_clusters_by_default() -> None:
     """A duplicate pair is represented as the smallest duplicate cluster."""
-    left = Chunk("left", "src/left.py", 1, 2, "python")
-    right = Chunk("right", "src/right.py", 1, 2, "python")
+    left = make_chunk("left", "src/left.py", end_line=2)
+    right = make_chunk("right", "src/right.py", end_line=2)
 
-    clusters = cluster_duplicate_pairs([_duplicate_result(left, right)])
+    pair = make_duplicate_pair(
+        left=left,
+        right=right,
+        score=0.9,
+        semantic_score=0.9,
+        structural_score=0.9,
+        token_jaccard=0.9,
+    )
+    clusters = cluster_duplicate_pairs([pair])
 
     assert len(clusters) == 1
     assert clusters[0].members == (left, right)
@@ -525,18 +517,34 @@ def test_cluster_duplicate_pairs_keeps_size_two_clusters_by_default() -> None:
 
 def test_cluster_duplicate_pairs_discards_small_components() -> None:
     """Components smaller than min_cluster_size are omitted."""
-    left = Chunk("left", "src/left.py", 1, 2, "python")
-    right = Chunk("right", "src/right.py", 1, 2, "python")
+    left = make_chunk("left", "src/left.py", end_line=2)
+    right = make_chunk("right", "src/right.py", end_line=2)
 
-    assert cluster_duplicate_pairs([_duplicate_result(left, right)], min_cluster_size=3) == []
+    pair = make_duplicate_pair(
+        left=left,
+        right=right,
+        score=0.9,
+        semantic_score=0.9,
+        structural_score=0.9,
+        token_jaccard=0.9,
+    )
+    assert cluster_duplicate_pairs([pair], min_cluster_size=3) == []
 
 
 def test_cluster_duplicate_pairs_clamps_min_cluster_size_to_two() -> None:
     """min_cluster_size below two still returns only real duplicate clusters."""
-    left = Chunk("left", "src/left.py", 1, 2, "python")
-    right = Chunk("right", "src/right.py", 1, 2, "python")
+    left = make_chunk("left", "src/left.py", end_line=2)
+    right = make_chunk("right", "src/right.py", end_line=2)
 
-    clusters = cluster_duplicate_pairs([_duplicate_result(left, right)], min_cluster_size=1)
+    pair = make_duplicate_pair(
+        left=left,
+        right=right,
+        score=0.9,
+        semantic_score=0.9,
+        structural_score=0.9,
+        token_jaccard=0.9,
+    )
+    clusters = cluster_duplicate_pairs([pair], min_cluster_size=1)
 
     assert len(clusters) == 1
     assert len(clusters[0].members) == 2
@@ -544,15 +552,22 @@ def test_cluster_duplicate_pairs_clamps_min_cluster_size_to_two() -> None:
 
 def test_cluster_duplicate_pairs_sorts_members_pairs_and_clusters() -> None:
     """Clusters, members, and pair edges are ordered deterministically."""
-    a = Chunk("a", "src/a.py", 1, 2, "python")
-    b = Chunk("b", "src/b.py", 1, 2, "python")
-    c = Chunk("c", "src/c.py", 1, 2, "python")
-    d = Chunk("d", "src/d.py", 1, 2, "python")
-    e = Chunk("e", "src/e.py", 1, 2, "python")
-    ac = _duplicate_result(a, c, score=0.7)
-    ab = _duplicate_result(a, b, score=0.9, semantic_score=0.8, structural_score=0.7)
-    bc = _duplicate_result(b, c, score=0.9, semantic_score=0.95, structural_score=0.6)
-    de = _duplicate_result(d, e, score=0.95)
+    a = make_chunk("a", "src/a.py", end_line=2)
+    b = make_chunk("b", "src/b.py", end_line=2)
+    c = make_chunk("c", "src/c.py", end_line=2)
+    d = make_chunk("d", "src/d.py", end_line=2)
+    e = make_chunk("e", "src/e.py", end_line=2)
+    ac = make_duplicate_pair(left=a, right=c, score=0.7, semantic_score=0.7, structural_score=0.7, token_jaccard=0.7)
+    ab = make_duplicate_pair(left=a, right=b, score=0.9, semantic_score=0.8, structural_score=0.7, token_jaccard=0.7)
+    bc = make_duplicate_pair(left=b, right=c, score=0.9, semantic_score=0.95, structural_score=0.6, token_jaccard=0.6)
+    de = make_duplicate_pair(
+        left=d,
+        right=e,
+        score=0.95,
+        semantic_score=0.95,
+        structural_score=0.95,
+        token_jaccard=0.95,
+    )
 
     clusters = cluster_duplicate_pairs([ac, de, ab, bc])
 
@@ -567,11 +582,30 @@ def test_cluster_duplicate_pairs_sorts_members_pairs_and_clusters() -> None:
 
 def test_cluster_duplicate_pairs_documents_weak_bridge_behavior() -> None:
     """Connected components allow A/B plus B/C to cluster without an A/C edge."""
-    a = Chunk("a", "src/a.py", 1, 2, "python")
-    b = Chunk("b", "src/b.py", 1, 2, "python")
-    c = Chunk("c", "src/c.py", 1, 2, "python")
+    a = make_chunk("a", "src/a.py", end_line=2)
+    b = make_chunk("b", "src/b.py", end_line=2)
+    c = make_chunk("c", "src/c.py", end_line=2)
 
-    clusters = cluster_duplicate_pairs([_duplicate_result(a, b), _duplicate_result(b, c)])
+    clusters = cluster_duplicate_pairs(
+        [
+            make_duplicate_pair(
+                left=a,
+                right=b,
+                score=0.9,
+                semantic_score=0.9,
+                structural_score=0.9,
+                token_jaccard=0.9,
+            ),
+            make_duplicate_pair(
+                left=b,
+                right=c,
+                score=0.9,
+                semantic_score=0.9,
+                structural_score=0.9,
+                token_jaccard=0.9,
+            ),
+        ]
+    )
 
     assert len(clusters) == 1
     assert [member.file_path for member in clusters[0].members] == ["src/a.py", "src/b.py", "src/c.py"]
@@ -580,10 +614,10 @@ def test_cluster_duplicate_pairs_documents_weak_bridge_behavior() -> None:
 
 def test_same_file_ranges_overlap() -> None:
     """Same-file overlapping ranges are detected with inclusive line ranges."""
-    left = Chunk("left", "src/a.py", 1, 10, "python")
-    overlap = Chunk("overlap", "src/a.py", 10, 20, "python")
-    separate = Chunk("separate", "src/a.py", 11, 20, "python")
-    other_file = Chunk("other", "src/b.py", 5, 8, "python")
+    left = make_chunk("left", "src/a.py", end_line=10)
+    overlap = make_chunk("overlap", "src/a.py", start_line=10, end_line=20)
+    separate = make_chunk("separate", "src/a.py", start_line=11, end_line=20)
+    other_file = make_chunk("other", "src/b.py", start_line=5, end_line=8)
 
     assert _same_file_ranges_overlap(left, overlap)
     assert not _same_file_ranges_overlap(left, separate)
@@ -592,8 +626,8 @@ def test_same_file_ranges_overlap() -> None:
 
 def test_pair_key_is_stable_for_reversed_pairs() -> None:
     """Pair keys are unordered so candidate generation can deduplicate A/B and B/A."""
-    left = Chunk("left", "src/b.py", 5, 8, "python")
-    right = Chunk("right", "src/a.py", 1, 4, "python")
+    left = make_chunk("left", "src/b.py", start_line=5, end_line=8)
+    right = make_chunk("right", "src/a.py", end_line=4)
 
     assert _pair_key(left, right) == _pair_key(right, left)
     assert _pair_key(left, right)[0] == ("src/a.py", 1, 4)

@@ -1,10 +1,8 @@
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 from vicinity.backends.basic import BasicArgs
 
@@ -14,52 +12,14 @@ from semble.duplicates.scoring import duplicate_features
 from semble.duplicates.search import find_duplicate_pairs
 from semble.index.create import _MAX_FILE_BYTES, create_index_from_path
 from semble.index.dense import SelectableBasicBackend
-from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
-from tests.conftest import make_chunk
+from semble.types import DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
+from tests.conftest import make_chunk, require_duplicate_features
 
 
 @pytest.fixture
 def indexed_index(mock_model: Any, tmp_project: Path) -> SembleIndex:
     """SembleIndex built from tmp_project."""
     return SembleIndex.from_path(tmp_project, model=mock_model)
-
-
-class _ConstantModel:
-    """Test encoder that makes every semantic query equally similar."""
-
-    def encode(self, texts: Sequence[str], /) -> npt.NDArray[np.float32]:
-        """Return a unit vector for each text."""
-        vectors = np.zeros((len(texts), 4), dtype=np.float32)
-        vectors[:, 0] = 1.0
-        return vectors
-
-
-def _chunk(
-    content: str,
-    file_path: str,
-    *,
-    start_line: int = 1,
-    language: str | None = "python",
-) -> Chunk:
-    """Create a Chunk with line numbers matching its content by default."""
-    return Chunk(
-        content=content,
-        file_path=file_path,
-        start_line=start_line,
-        end_line=start_line + len(content.splitlines()) - 1,
-        language=language,
-    )
-
-
-def _duplicate_index(chunks: list[Chunk]) -> SembleIndex:
-    """Build a lightweight duplicate-test index without loading a real model."""
-    if chunks:
-        embeddings = np.zeros((len(chunks), 4), dtype=np.float32)
-        embeddings[:, 0] = 1.0
-        semantic_index = SelectableBasicBackend(embeddings, BasicArgs())
-    else:
-        semantic_index = MagicMock()
-    return SembleIndex(_ConstantModel(), MagicMock(), semantic_index, chunks)
 
 
 def _cluster_paths(cluster: DuplicateCluster) -> set[str]:
@@ -190,9 +150,9 @@ def test_find_related(indexed_index: SembleIndex) -> None:
     ]
 
 
-def test_find_duplicates_returns_ranked_clusters_and_respects_top_k() -> None:
+def test_find_duplicates_returns_ranked_clusters_and_respects_top_k(duplicate_index_factory) -> None:
     """find_duplicates returns the strongest duplicate cluster up to top_k."""
-    left = _chunk(
+    left = make_chunk(
         """\
 def total_price(items):
     total = 0
@@ -202,7 +162,7 @@ def total_price(items):
 """,
         "src/prices.py",
     )
-    renamed = _chunk(
+    renamed = make_chunk(
         """\
 def invoice_amount(products):
     amount = 0
@@ -212,7 +172,7 @@ def invoice_amount(products):
 """,
         "src/invoices.py",
     )
-    unrelated = _chunk(
+    unrelated = make_chunk(
         """\
 class Renderer:
     def render(self, page):
@@ -220,7 +180,7 @@ class Renderer:
 """,
         "src/render.py",
     )
-    index = _duplicate_index([left, renamed, unrelated])
+    index = duplicate_index_factory([left, renamed, unrelated])
 
     results = index.find_duplicates(top_k=1, min_lines=1)
 
@@ -230,7 +190,7 @@ class Renderer:
     assert isinstance(results[0].pairs[0], DuplicatePair)
 
 
-def test_find_duplicate_pairs_helper_returns_unsliced_sorted_pairs() -> None:
+def test_find_duplicate_pairs_helper_returns_unsliced_sorted_pairs(duplicate_index_factory) -> None:
     """The private pair scan returns all sorted pairs for later clustering."""
     content = """\
 def total(items):
@@ -239,11 +199,11 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/b.py"),
-            _chunk(content, "src/c.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
+            make_chunk(content, "src/c.py"),
         ]
     )
 
@@ -273,8 +233,8 @@ def total(items):
 def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
     """Duplicate discovery reuses indexed embeddings instead of encoding each chunk again."""
     chunks = [
-        _chunk("def add(a, b):\n    return a + b", "src/a.py"),
-        _chunk("def plus(x, y):\n    return x + y", "src/b.py"),
+        make_chunk("def add(a, b):\n    return a + b", "src/a.py"),
+        make_chunk("def plus(x, y):\n    return x + y", "src/b.py"),
     ]
     embeddings = np.zeros((len(chunks), 4), dtype=np.float32)
     embeddings[:, 0] = 1.0
@@ -286,14 +246,14 @@ def test_find_duplicates_uses_existing_embeddings_without_reencoding() -> None:
     model.encode.assert_not_called()
 
 
-def test_find_duplicates_batches_neighbor_queries_by_language() -> None:
+def test_find_duplicates_batches_neighbor_queries_by_language(duplicate_index_factory) -> None:
     """Semantic neighbors are queried in language groups while preserving candidate_k."""
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk("def add(a, b):\n    return a + b", "src/a.py", language="python"),
-            _chunk("def plus(x, y):\n    return x + y", "src/b.py", language="python"),
-            _chunk("function add(a, b) {\n  return a + b;\n}", "src/a.js", language="javascript"),
-            _chunk("function plus(x, y) {\n  return x + y;\n}", "src/b.js", language="javascript"),
+            make_chunk("def add(a, b):\n    return a + b", "src/a.py", language="python"),
+            make_chunk("def plus(x, y):\n    return x + y", "src/b.py", language="python"),
+            make_chunk("function add(a, b) {\n  return a + b;\n}", "src/a.js", language="javascript"),
+            make_chunk("function plus(x, y) {\n  return x + y;\n}", "src/b.js", language="javascript"),
         ]
     )
 
@@ -306,13 +266,16 @@ def test_find_duplicates_batches_neighbor_queries_by_language() -> None:
     assert all(call.kwargs["k"] == 2 for call in mock_query.call_args_list)
 
 
-def test_find_duplicates_precomputes_features_once_per_eligible_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_find_duplicates_precomputes_features_once_per_eligible_chunk(
+    duplicate_index_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Duplicate structural features are cached per chunk during a scan."""
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk("def add(a, b):\n    return a + b", "src/a.py"),
-            _chunk("def plus(x, y):\n    return x + y", "src/b.py"),
-            _chunk("def skip(a, b):\n    return a + b", "tests/test_skip.py"),
+            make_chunk("def add(a, b):\n    return a + b", "src/a.py"),
+            make_chunk("def plus(x, y):\n    return x + y", "src/b.py"),
+            make_chunk("def skip(a, b):\n    return a + b", "tests/test_skip.py"),
         ]
     )
     mock_features = MagicMock(wraps=duplicate_features)
@@ -323,7 +286,7 @@ def test_find_duplicates_precomputes_features_once_per_eligible_chunk(monkeypatc
     assert mock_features.call_count == 2
 
 
-def test_find_duplicates_excludes_overlapping_same_file_ranges() -> None:
+def test_find_duplicates_excludes_overlapping_same_file_ranges(duplicate_index_factory) -> None:
     """Same-file overlapping chunks are not returned as duplicate clusters."""
     content = """\
 def total(items):
@@ -332,17 +295,17 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/prices.py", start_line=1),
-            _chunk(content, "src/prices.py", start_line=3),
+            make_chunk(content, "src/prices.py", start_line=1),
+            make_chunk(content, "src/prices.py", start_line=3),
         ]
     )
 
     assert index.find_duplicates(min_lines=1) == []
 
 
-def test_find_duplicates_deduplicates_reversed_pairs_deterministically() -> None:
+def test_find_duplicates_deduplicates_reversed_pairs_deterministically(duplicate_index_factory) -> None:
     """A/B and B/A semantic candidates collapse into one stable pair."""
     content = """\
 def total(items):
@@ -351,10 +314,10 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/b.py"),
-            _chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
+            make_chunk(content, "src/a.py"),
         ]
     )
 
@@ -365,7 +328,7 @@ def total(items):
     assert results[0].pairs[0].right.file_path == "src/b.py"
 
 
-def test_find_duplicates_filters_path_scopes() -> None:
+def test_find_duplicates_filters_path_scopes(duplicate_index_factory) -> None:
     """Include and exclude path scopes match exact files and directory prefixes."""
     content = """\
 def total(items):
@@ -374,12 +337,12 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/nested/b.py"),
-            _chunk(content, "src/generated/c.py"),
-            _chunk(content, "tests/a_test.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/nested/b.py"),
+            make_chunk(content, "src/generated/c.py"),
+            make_chunk(content, "tests/a_test.py"),
         ]
     )
 
@@ -396,7 +359,7 @@ def total(items):
     assert index.find_duplicates(min_lines=1, include_paths=["src/a.py"]) == []
 
 
-def test_find_duplicates_excludes_tests_by_default() -> None:
+def test_find_duplicates_excludes_tests_by_default(duplicate_index_factory) -> None:
     """Duplicate discovery skips test-looking paths unless include_tests=True."""
     content = """\
 def total(items):
@@ -405,10 +368,10 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "tests/test_a.py"),
-            _chunk(content, "tests/test_b.py"),
+            make_chunk(content, "tests/test_a.py"),
+            make_chunk(content, "tests/test_b.py"),
         ]
     )
 
@@ -416,7 +379,7 @@ def total(items):
     assert len(index.find_duplicates(min_lines=1, include_tests=True)) == 1
 
 
-def test_find_duplicates_excludes_test_filename_patterns_by_default() -> None:
+def test_find_duplicates_excludes_test_filename_patterns_by_default(duplicate_index_factory) -> None:
     """Test-looking filenames outside test dirs are skipped by default."""
     content = """\
 def total(items):
@@ -425,10 +388,10 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/prices.test.py"),
-            _chunk(content, "src/invoices.spec.py"),
+            make_chunk(content, "src/prices.test.py"),
+            make_chunk(content, "src/invoices.spec.py"),
         ]
     )
 
@@ -436,7 +399,7 @@ def total(items):
     assert len(index.find_duplicates(min_lines=1, include_tests=True)) == 1
 
 
-def test_find_duplicates_intersects_language_and_path_filters() -> None:
+def test_find_duplicates_intersects_language_and_path_filters(duplicate_index_factory) -> None:
     """Duplicate filters use intersection semantics instead of search's union selector."""
     content = """\
 def total(items):
@@ -445,10 +408,10 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py", language="python"),
-            _chunk(content, "web/a.js", language="javascript"),
+            make_chunk(content, "src/a.py", language="python"),
+            make_chunk(content, "web/a.js", language="javascript"),
         ]
     )
 
@@ -462,7 +425,7 @@ def total(items):
     )
 
 
-def test_find_duplicates_respects_language_filter() -> None:
+def test_find_duplicates_respects_language_filter(duplicate_index_factory) -> None:
     """Language filters restrict all returned duplicate cluster members."""
     content = """\
 def total(items):
@@ -471,11 +434,11 @@ def total(items):
         total += item.price
     return total
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py", language="python"),
-            _chunk(content, "src/b.py", language="python"),
-            _chunk(content, "src/a.js", language="javascript"),
+            make_chunk(content, "src/a.py", language="python"),
+            make_chunk(content, "src/b.py", language="python"),
+            make_chunk(content, "src/a.js", language="javascript"),
         ]
     )
 
@@ -485,16 +448,16 @@ def total(items):
     assert {member.language for member in results[0].members} == {"python"}
 
 
-def test_find_duplicates_respects_min_lines_and_min_score() -> None:
+def test_find_duplicates_respects_min_lines_and_min_score(duplicate_index_factory) -> None:
     """Minimum line, score, and cluster-size thresholds filter duplicate clusters."""
     content = """\
 def add(a, b):
     return a + b
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/b.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
         ]
     )
 
@@ -504,16 +467,19 @@ def add(a, b):
     assert index.find_duplicates(min_lines=1, min_cluster_size=3) == []
 
 
-def test_find_duplicates_respects_default_structural_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_find_duplicates_respects_default_structural_floor(
+    duplicate_index_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Weak structural pairs are filtered by default and can be included by lowering the floor."""
     content = """\
 def add(a, b):
     return a + b
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/b.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
         ]
     )
     monkeypatch.setattr(
@@ -530,33 +496,33 @@ def add(a, b):
     assert len(index.find_duplicates(min_lines=1, min_structural_score=0.39)) == 1
 
 
-def test_find_duplicates_excludes_cross_language_pairs() -> None:
+def test_find_duplicates_excludes_cross_language_pairs(duplicate_index_factory) -> None:
     """Duplicate discovery only compares chunks with the same language."""
     content = """\
 def add(a, b):
     return a + b
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py", language="python"),
-            _chunk(content, "src/a.js", language="javascript"),
+            make_chunk(content, "src/a.py", language="python"),
+            make_chunk(content, "src/a.js", language="javascript"),
         ]
     )
 
     assert index.find_duplicates(min_lines=1) == []
 
 
-def test_find_duplicates_allows_unknown_language_pairs() -> None:
+def test_find_duplicates_allows_unknown_language_pairs(duplicate_index_factory) -> None:
     """Unknown-language chunks compare only with other unknown-language chunks."""
     content = """\
 def add(a, b):
     return a + b
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.txt", language=None),
-            _chunk(content, "src/b.txt", language=None),
-            _chunk(content, "src/c.py", language="python"),
+            make_chunk(content, "src/a.txt", language=None),
+            make_chunk(content, "src/b.txt", language=None),
+            make_chunk(content, "src/c.py", language="python"),
         ]
     )
 
@@ -566,25 +532,23 @@ def add(a, b):
     assert {member.language for member in results[0].members} == {None}
 
 
-def test_find_duplicates_excludes_docstring_only_chunks_when_parser_is_available() -> None:
+def test_find_duplicates_excludes_docstring_only_chunks_when_parser_is_available(duplicate_index_factory) -> None:
     """Parser-supported chunks with only string/comment AST subtrees are not duplicate candidates."""
-    if duplicate_features(_chunk("def real():\n    return 1", "src/real.py")).code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("def real():\n    return 1", "src/real.py")
 
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk('"""Repeated documentation."""', "src/a.py"),
-            _chunk('"""Repeated documentation."""', "src/b.py"),
+            make_chunk('"""Repeated documentation."""', "src/a.py"),
+            make_chunk('"""Repeated documentation."""', "src/b.py"),
         ]
     )
 
     assert index.find_duplicates(min_lines=1) == []
 
 
-def test_find_duplicates_excludes_static_data_chunks_by_default() -> None:
+def test_find_duplicates_excludes_static_data_chunks_by_default(duplicate_index_factory) -> None:
     """Static data/config chunks are skipped unless include_data=True."""
-    if duplicate_features(_chunk("[1, 2, 3]", "src/data.py")).code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("[1, 2, 3]", "src/data.py")
 
     content = """\
 VALUES = [
@@ -593,10 +557,10 @@ VALUES = [
     (7, 8, 9),
 ]
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/b.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
         ]
     )
 
@@ -605,10 +569,9 @@ VALUES = [
     assert len(index.find_duplicates(min_lines=1, include_data=True)) == 1
 
 
-def test_find_duplicates_excludes_scalar_config_assignments_by_default() -> None:
+def test_find_duplicates_excludes_scalar_config_assignments_by_default(duplicate_index_factory) -> None:
     """Scalar assignment-only config chunks are skipped unless include_data=True."""
-    if duplicate_features(_chunk("VALUE = 1", "src/config.py")).code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("VALUE = 1", "src/config.py")
 
     content = """\
 DATE_FORMAT = "j F Y"
@@ -616,10 +579,10 @@ TIME_FORMAT = "h:i A"
 MONTH_DAY_FORMAT = "j F"
 SHORT_DATE_FORMAT = "j M Y"
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/b.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
         ]
     )
 
@@ -627,17 +590,15 @@ SHORT_DATE_FORMAT = "j M Y"
     assert len(index.find_duplicates(min_lines=1, include_data=True)) == 1
 
 
-def test_find_duplicates_excludes_scaffolding_chunks_by_default() -> None:
+def test_find_duplicates_excludes_scaffolding_chunks_by_default(duplicate_index_factory) -> None:
     """Import/header/attribute scaffolding chunks are skipped unless include_scaffolding=True."""
-    rust_feature_probe = duplicate_features(_chunk("#![allow(clippy::too_many_lines)]", "src/lib.rs", language="rust"))
-    if rust_feature_probe.code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("#![allow(clippy::too_many_lines)]", "src/lib.rs", language="rust")
 
     content = "#![allow(clippy::too_many_lines, clippy::missing_errors_doc)]\n"
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.rs", language="rust"),
-            _chunk(content, "src/b.rs", language="rust"),
+            make_chunk(content, "src/a.rs", language="rust"),
+            make_chunk(content, "src/b.rs", language="rust"),
         ]
     )
 
@@ -646,11 +607,9 @@ def test_find_duplicates_excludes_scaffolding_chunks_by_default() -> None:
     assert len(index.find_duplicates(min_lines=1, include_scaffolding=True)) == 1
 
 
-def test_find_duplicates_strips_scaffolding_from_mixed_chunks_by_default() -> None:
+def test_find_duplicates_strips_scaffolding_from_mixed_chunks_by_default(duplicate_index_factory) -> None:
     """Repeated imports do not make unrelated mixed chunks duplicate candidates by default."""
-    parser_probe = duplicate_features(_chunk("import os\n\ndef f():\n    return os.getcwd()", "src/a.py"))
-    if parser_probe.code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("import os\n\ndef f():\n    return os.getcwd()", "src/a.py")
 
     left = """\
 import alpha
@@ -674,10 +633,10 @@ import zeta
 def send_email(message):
     beta.dispatch(message)
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(left, "src/a.py"),
-            _chunk(right, "src/b.py"),
+            make_chunk(left, "src/a.py"),
+            make_chunk(right, "src/b.py"),
         ]
     )
 
@@ -689,11 +648,9 @@ def send_email(message):
     assert "import alpha" in scaffold_pair.right_content
 
 
-def test_find_duplicates_keeps_substantive_duplicates_with_scaffolding_stripped() -> None:
+def test_find_duplicates_keeps_substantive_duplicates_with_scaffolding_stripped(duplicate_index_factory) -> None:
     """Mixed chunks still match when their substantive bodies are duplicates."""
-    parser_probe = duplicate_features(_chunk("import os\n\ndef f():\n    return os.getcwd()", "src/a.py"))
-    if parser_probe.code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("import os\n\ndef f():\n    return os.getcwd()", "src/a.py")
 
     left = """\
 import alpha
@@ -709,10 +666,10 @@ import beta
 def normalize_email(email):
     return email.strip().lower()
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(left, "src/a.py"),
-            _chunk(right, "src/b.py"),
+            make_chunk(left, "src/a.py"),
+            make_chunk(right, "src/b.py"),
         ]
     )
 
@@ -727,34 +684,34 @@ def normalize_email(email):
     assert "def normalize_email" in pair.right_content
 
 
-def test_find_duplicates_keeps_declaration_only_chunks_without_static_bindings() -> None:
+def test_find_duplicates_keeps_declaration_only_chunks_without_static_bindings(duplicate_index_factory) -> None:
     """Declaration-only chunks are not treated as static data without binding/data-shape nodes."""
-    if duplicate_features(_chunk("class User:\n    pass", "src/user.py")).code_bearing_node_count is None:
-        pytest.skip("tree_sitter_language_pack is not available")
+    require_duplicate_features("class User:\n    pass", "src/user.py")
 
     content = """\
 class UserRecord:
     pass
 """
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk(content, "src/a.py"),
-            _chunk(content, "src/b.py"),
+            make_chunk(content, "src/a.py"),
+            make_chunk(content, "src/b.py"),
         ]
     )
 
     assert len(index.find_duplicates(min_lines=1)) == 1
 
 
-def test_find_duplicates_empty_or_non_positive_top_k_returns_empty() -> None:
+def test_find_duplicates_empty_or_non_positive_top_k_returns_empty(duplicate_index_factory) -> None:
     """Empty indexes, singletons, and non-positive top_k return no duplicate clusters."""
-    assert _duplicate_index([]).find_duplicates() == []
-    assert _duplicate_index([_chunk("def add(a, b):\n    return a + b", "src/a.py")]).find_duplicates(min_lines=1) == []
+    assert duplicate_index_factory([]).find_duplicates() == []
+    singleton = duplicate_index_factory([make_chunk("def add(a, b):\n    return a + b", "src/a.py")])
+    assert singleton.find_duplicates(min_lines=1) == []
 
-    index = _duplicate_index(
+    index = duplicate_index_factory(
         [
-            _chunk("def add(a, b):\n    return a + b", "src/a.py"),
-            _chunk("def add(a, b):\n    return a + b", "src/b.py"),
+            make_chunk("def add(a, b):\n    return a + b", "src/a.py"),
+            make_chunk("def add(a, b):\n    return a + b", "src/b.py"),
         ]
     )
     assert index.find_duplicates(top_k=0, min_lines=1) == []

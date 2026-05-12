@@ -8,14 +8,12 @@ from semble.mcp import _CACHE_MAX_SIZE, _IndexCache, create_server, serve
 from semble.types import (
     Chunk,
     DuplicateCluster,
-    DuplicatePair,
-    DuplicateSignals,
     Encoder,
     SearchMode,
     SearchResult,
 )
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
-from tests.conftest import make_chunk
+from tests.conftest import make_chunk, make_duplicate_cluster
 
 
 def _tool_text(result: Any) -> str:
@@ -48,27 +46,6 @@ async def _call_tool(
 def cache() -> _IndexCache:
     """An _IndexCache backed by a stub model."""
     return _IndexCache(model=MagicMock(spec=Encoder))
-
-
-def _duplicate_result() -> DuplicatePair:
-    """Return a representative duplicate result for MCP tests."""
-    left = make_chunk("def left():\n    return 1", "src/left.py")
-    right = make_chunk("def right():\n    return 1", "src/right.py")
-    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
-    return DuplicatePair(
-        left=left,
-        right=right,
-        score=0.84,
-        signals=signals,
-        left_content=left.content,
-        right_content=right.content,
-    )
-
-
-def _duplicate_cluster() -> DuplicateCluster:
-    """Return a representative duplicate cluster for MCP tests."""
-    result = _duplicate_result()
-    return DuplicateCluster(members=(result.left, result.right), pairs=(result,))
 
 
 def test_resolve_chunk() -> None:
@@ -259,7 +236,7 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "find_duplicates",
             {"top_k": 2},
             "find_duplicates",
-            [_duplicate_cluster()],
+            [make_duplicate_cluster()],
             None,
             ["Duplicate clusters", "src/left.py"],
             id="find_duplicates_with_results",
@@ -296,7 +273,7 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
     fake_index = MagicMock()
     with (
         patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get,
-        patch("semble.mcp.asyncio.to_thread", new=AsyncMock(return_value=[_duplicate_cluster()])) as mock_to_thread,
+        patch("semble.mcp.asyncio.to_thread", new=AsyncMock(return_value=[make_duplicate_cluster()])) as mock_to_thread,
     ):
         server = create_server(cache, default_source="/some/path")
         result = await server.call_tool(

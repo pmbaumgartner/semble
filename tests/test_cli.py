@@ -7,29 +7,10 @@ import pytest
 
 from semble.cli import _CLAUDE_FILE_PATH, _cli_main, _run_init, main
 from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
-from semble.types import DuplicateCluster, DuplicatePair, DuplicateSignals, SearchMode, SearchResult
-from tests.conftest import make_chunk
+from semble.types import SearchMode, SearchResult
+from tests.conftest import make_chunk, make_duplicate_cluster
 
 _CLAUDE_AGENT_FILE = files("semble").joinpath("agents/semble-search.md").read_text(encoding="utf-8")
-
-
-def _duplicate_result() -> DuplicatePair:
-    left = make_chunk("def left():\n    return 1", "src/left.py")
-    right = make_chunk("def right():\n    return 1", "src/right.py")
-    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.7)
-    return DuplicatePair(
-        left=left,
-        right=right,
-        score=0.84,
-        signals=signals,
-        left_content=left.content,
-        right_content=right.content,
-    )
-
-
-def _duplicate_cluster() -> DuplicateCluster:
-    result = _duplicate_result()
-    return DuplicateCluster(members=(result.left, result.right), pairs=(result,))
 
 
 @pytest.mark.parametrize(
@@ -121,7 +102,7 @@ def test_cli_find_duplicates_maps_options(
 ) -> None:
     """_cli_main find-duplicates maps CLI options to index.find_duplicates."""
     fake_index = MagicMock()
-    fake_index.find_duplicates.return_value = [_duplicate_cluster()]
+    fake_index.find_duplicates.return_value = [make_duplicate_cluster()]
     monkeypatch.setattr(
         sys,
         "argv",
