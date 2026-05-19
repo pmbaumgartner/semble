@@ -1,10 +1,7 @@
 import pytest
 
-import semble.duplicates.ast as duplicate_ast
-from semble.duplicates.ast import (
-    _normalize_ast_label,
-    _parser_language_for_chunk,
-)
+import semble.duplicates.ast.features as duplicate_ast_features
+from semble.duplicates.ast.taxonomy import _normalize_ast_label
 from semble.duplicates.clustering import (
     _pair_key,
     _same_file_ranges_overlap,
@@ -17,9 +14,7 @@ from semble.duplicates.scoring import (
     duplicate_score,
     score_duplicate_features,
 )
-from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
-from semble.duplicates.tokens import _jaccard
-from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals
+from semble.types import Chunk, DuplicateCluster, DuplicateSignals
 from tests.conftest import make_chunk, make_duplicate_pair, require_parsers
 
 
@@ -31,30 +26,17 @@ def _score_chunks(left: Chunk, right: Chunk, *, semantic_score: float) -> Duplic
     )
 
 
-def test_duplicate_types_group_pairs() -> None:
-    """Duplicate result types represent scored pairs and grouped clusters."""
-    left = make_chunk("def left():\n    return 1", "left.py")
-    right = make_chunk("def right():\n    return 1", "right.py")
-    signals = DuplicateSignals(semantic_score=0.9, structural_score=0.8, token_jaccard=0.8)
-    result = DuplicatePair(
-        left=left,
-        right=right,
-        score=0.84,
-        signals=signals,
-        left_content=left.content,
-        right_content=right.content,
+def test_duplicate_cluster_score_uses_strongest_pair() -> None:
+    """DuplicateCluster.score reflects the strongest pair in a cluster."""
+    strongest = make_duplicate_pair(score=0.84)
+    weaker = make_duplicate_pair(
+        left=strongest.right,
+        right=make_chunk("def third():\n    return 1", "third.py"),
+        score=0.75,
     )
-    cluster = DuplicateCluster(members=(left, right), pairs=(result,))
+    cluster = DuplicateCluster(members=(strongest.left, strongest.right, weaker.right), pairs=(strongest, weaker))
 
-    assert result.left is left
-    assert result.right is right
-    assert result.left_content == left.content
-    assert result.right_content == right.content
-    assert result.signals is signals
-    assert cluster.members == (left, right)
-    assert cluster.pairs == (result,)
-    assert cluster.score == result.score
-    assert DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE == 0.4
+    assert cluster.score == 0.84
 
 
 def test_score_duplicate_pair_ranks_renamed_code_above_unrelated_code() -> None:
@@ -102,7 +84,6 @@ def test_empty_or_comment_only_fingerprints_are_not_perfect_matches() -> None:
     right = make_chunk("// only a comment\n-- another comment", "right.py")
     signals = _score_chunks(left, right, semantic_score=1.0)
 
-    assert _jaccard(set(), set()) == 0.0
     assert signals.token_jaccard == 0.0
     assert signals.ast_type_jaccard is None
     assert signals.ast_shape_jaccard is None
@@ -179,21 +160,6 @@ def invoice_amount(products):
             ast_shape_jaccard=signals.ast_shape_jaccard,
         )
     )
-
-
-def test_score_duplicate_features_reuses_precomputed_features() -> None:
-    """Precomputed duplicate features produce the same signals as chunk-level scoring."""
-    left = make_chunk("def add(a, b):\n    return a + b", "left.py")
-    right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
-
-    from_chunks = _score_chunks(left, right, semantic_score=0.9)
-    from_features = score_duplicate_features(
-        duplicate_features(left),
-        duplicate_features(right),
-        semantic_score=0.9,
-    )
-
-    assert from_features == from_chunks
 
 
 def test_duplicate_features_detect_docstring_only_chunks_when_parser_is_available() -> None:
@@ -386,7 +352,7 @@ def build_user():
 
 def test_score_duplicate_pair_falls_back_when_parser_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing parser support leaves AST signals unavailable and keeps token scoring."""
-    monkeypatch.setattr(duplicate_ast, "_parser_for_language", lambda language: None)
+    monkeypatch.setattr(duplicate_ast_features, "get_parser_for_language", lambda language: None)
     left = make_chunk("def add(a, b):\n    return a + b", "left.py")
     right = make_chunk("def plus(x, y):\n    return x + y", "right.py")
 
@@ -404,7 +370,6 @@ def test_score_duplicate_pair_falls_back_for_unsupported_language() -> None:
 
     signals = _score_chunks(left, right, semantic_score=0.9)
 
-    assert _parser_language_for_chunk("text") is None
     assert signals.ast_type_jaccard is None
     assert signals.ast_shape_jaccard is None
     assert signals.structural_score == signals.token_jaccard

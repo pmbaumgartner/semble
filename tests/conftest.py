@@ -10,7 +10,7 @@ import pytest
 from vicinity.backends.basic import BasicArgs
 
 from semble import SembleIndex
-from semble.duplicates.ast import _parser_for_language
+from semble.chunking.core import get_parser_for_language
 from semble.duplicates.scoring import DuplicateFeatures, duplicate_features
 from semble.index.dense import SelectableBasicBackend
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, DuplicateSignals
@@ -129,7 +129,7 @@ def duplicate_index_factory() -> Callable[[Sequence[Chunk]], SembleIndex]:
 
 def require_parsers(*languages: str) -> None:
     """Skip the current test unless all requested tree-sitter parsers are available."""
-    if any(_parser_for_language(language) is None for language in languages):
+    if any(get_parser_for_language(language) is None for language in languages):
         pytest.skip("tree_sitter_language_pack is not available")
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from fnmatch import fnmatchcase
 from typing import Any
 
 import numpy as np
@@ -16,11 +15,10 @@ from semble.duplicates.scoring import (
     duplicate_score,
     score_duplicate_features,
 )
+from semble.ranking.penalties import _TEST_DIR_RE, _TEST_FILE_RE
 from semble.types import Chunk, DuplicatePair
 
 DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE = 0.40
-_TEST_DIR_NAMES = frozenset({"tests", "test", "testing", "__tests__", "spec", "specs", "e2e"})
-_TEST_FILE_PATTERNS = ("test_*.*", "*_test.*", "*_tests.*", "*.test.*", "*.spec.*")
 
 
 def find_duplicate_pairs(
@@ -312,18 +310,6 @@ def _path_in_scopes(normalized_path: str, normalized_scopes: Sequence[str]) -> b
 
 
 def _is_test_path(file_path: str) -> bool:
-    if not file_path:
-        return False
-    parts = file_path.split("/")
-    if any(part.lower() in _TEST_DIR_NAMES for part in parts[:-1]):
-        return True
-    filename = parts[-1]
-    normalized_filename = filename.lower()
-    return any(fnmatchcase(normalized_filename, pattern) for pattern in _TEST_FILE_PATTERNS) or _is_pascal_test_file(
-        filename
-    )
-
-
-def _is_pascal_test_file(filename: str) -> bool:
-    stem = filename.rsplit(".", maxsplit=1)[0]
-    return stem.endswith(("Test", "Tests"))
+    """Return whether a path matches the shared test-file or test-directory patterns."""
+    normalized_path = file_path.replace("\\", "/")
+    return _TEST_FILE_RE.search(normalized_path) is not None or _TEST_DIR_RE.search(normalized_path) is not None

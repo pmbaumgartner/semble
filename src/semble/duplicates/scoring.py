@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from semble.duplicates.ast import _ast_features
+from semble.duplicates.ast.features import _ast_features
 from semble.duplicates.tokens import _jaccard, _token_ngrams
 from semble.types import Chunk, DuplicateSignals
 

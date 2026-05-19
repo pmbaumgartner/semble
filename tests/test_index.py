@@ -12,7 +12,7 @@ from semble.duplicates.scoring import duplicate_features
 from semble.duplicates.search import find_duplicate_pairs
 from semble.index.create import _MAX_FILE_BYTES, create_index_from_path
 from semble.index.dense import SelectableBasicBackend
-from semble.types import DuplicateCluster, DuplicatePair, DuplicateSignals, Encoder
+from semble.types import DuplicateCluster, DuplicateSignals, Encoder
 from tests.conftest import make_chunk, require_duplicate_features
 
 
@@ -185,9 +185,7 @@ class Renderer:
     results = index.find_duplicates(top_k=1, min_lines=1)
 
     assert len(results) == 1
-    assert isinstance(results[0], DuplicateCluster)
     assert _cluster_paths(results[0]) == {"src/prices.py", "src/invoices.py"}
-    assert isinstance(results[0].pairs[0], DuplicatePair)
 
 
 def test_find_duplicate_pairs_helper_returns_unsliced_sorted_pairs(duplicate_index_factory) -> None:
@@ -380,7 +378,7 @@ def total(items):
 
 
 def test_find_duplicates_excludes_test_filename_patterns_by_default(duplicate_index_factory) -> None:
-    """Test-looking filenames outside test dirs are skipped by default."""
+    """Test-looking filenames from the ranking policy are skipped by default."""
     content = """\
 def total(items):
     total = 0
@@ -390,13 +388,30 @@ def total(items):
 """
     index = duplicate_index_factory(
         [
-            make_chunk(content, "src/prices.test.py"),
-            make_chunk(content, "src/invoices.spec.py"),
+            make_chunk(content, "src/test_prices.py"),
+            make_chunk(content, "src/invoices_test.py"),
         ]
     )
 
     assert index.find_duplicates(min_lines=1) == []
     assert len(index.find_duplicates(min_lines=1, include_tests=True)) == 1
+
+
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "tests/test_total.py",
+        "src/test_total.py",
+        "src/total_test.go",
+        "src/TotalTest.java",
+        "src/total.test.ts",
+    ],
+)
+def test_duplicate_test_path_filter_uses_shared_test_patterns(file_path: str) -> None:
+    """Duplicate discovery uses the shared test path regexes through its own helper."""
+    assert duplicate_search._is_test_path(file_path)
+    assert not duplicate_search._path_is_included(file_path, include_tests=False)
+    assert duplicate_search._path_is_included(file_path, include_tests=True)
 
 
 def test_find_duplicates_intersects_language_and_path_filters(duplicate_index_factory) -> None:

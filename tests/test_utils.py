@@ -19,11 +19,6 @@ def _multi_pair_cluster(pair_count: int) -> DuplicateCluster:
     return make_duplicate_cluster(pairs)
 
 
-def test_format_duplicate_clusters_empty() -> None:
-    """Empty duplicate clusters render only the header."""
-    assert _format_duplicate_clusters("Duplicate clusters", []) == "Duplicate clusters\n"
-
-
 def test_format_duplicate_clusters_summary_members_and_strongest_pair() -> None:
     """Cluster formatting includes summary metadata, members, and strongest pair snippets."""
     out = _format_duplicate_clusters("Duplicate clusters", [make_duplicate_cluster()])

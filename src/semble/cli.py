@@ -10,7 +10,7 @@ from model2vec.utils import get_package_extras
 from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.stats import format_savings_report
-from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
 _CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "find-duplicates", "init", "savings", "-h", "--help"})
@@ -185,7 +185,8 @@ def _cli_main() -> None:
 
     elif args.command == "find-duplicates":
         print(
-            _format_duplicate_search_result(
+            _format_duplicate_clusters(
+                "Duplicate clusters",
                 index.find_duplicates(
                     top_k=args.top_k,
                     candidate_k=args.candidate_k,
@@ -199,6 +200,7 @@ def _cli_main() -> None:
                     include_tests=args.include_tests,
                     include_data=args.include_data,
                     include_scaffolding=args.include_scaffolding,
-                )
+                ),
+                empty_message="No duplicate clusters found.",
             )
         )

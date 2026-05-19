@@ -14,7 +14,7 @@ from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.index.dense import load_model
 from semble.types import Encoder
-from semble.utils import _format_duplicate_search_result, _format_results, _is_git_url, _resolve_chunk
+from semble.utils import _format_duplicate_clusters, _format_results, _is_git_url, _resolve_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,11 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             include_data=include_data,
             include_scaffolding=include_scaffolding,
         )
-        return _format_duplicate_search_result(clusters)
+        return _format_duplicate_clusters(
+            "Duplicate clusters",
+            clusters,
+            empty_message="No duplicate clusters found.",
+        )
 
     return server
 
