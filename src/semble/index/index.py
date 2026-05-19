@@ -95,8 +95,7 @@ class SembleIndex:
         cls,
         path: str | Path,
         model: Encoder | None = None,
-        extensions: frozenset[str] | None = None,
-        ignore: frozenset[str] | None = None,
+        extensions: Sequence[str] | None = None,
         include_text_files: bool = False,
     ) -> SembleIndex:
         """Create and index a SembleIndex from a directory.
@@ -104,7 +103,6 @@ class SembleIndex:
         :param path: Root directory to index.
         :param model: Embedding model to use. Defaults to potion-code-16M.
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
-        :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
         :return: An indexed SembleIndex. Chunk file paths are relative to ``path``.
         :raises FileNotFoundError: If `path` does not exist.
@@ -121,7 +119,6 @@ class SembleIndex:
             path,
             model=model,
             extensions=extensions,
-            ignore=ignore,
             include_text_files=include_text_files,
             display_root=path,
         )
@@ -134,8 +131,7 @@ class SembleIndex:
         url: str,
         ref: str | None = None,
         model: Encoder | None = None,
-        extensions: frozenset[str] | None = None,
-        ignore: frozenset[str] | None = None,
+        extensions: Sequence[str] | None = None,
         include_text_files: bool = False,
     ) -> SembleIndex:
         """Clone a git repository and index it.
@@ -149,7 +145,6 @@ class SembleIndex:
         :param ref: Branch or tag to check out. Defaults to the remote HEAD.
         :param model: Embedding model to use. Defaults to potion-code-16M.
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
-        :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_text_files: If True, also index non-code text files (.md, .yaml, .json, etc.).
         :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
         :raises RuntimeError: If git is not on PATH, the clone fails, or times out.
@@ -173,7 +168,6 @@ class SembleIndex:
                 resolved_path,
                 model=model,
                 extensions=extensions,
-                ignore=ignore,
                 include_text_files=include_text_files,
                 display_root=resolved_path,
             )

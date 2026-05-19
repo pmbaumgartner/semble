@@ -1,149 +1,131 @@
-import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 from pathspec import GitIgnoreSpec
 
 
-class FileCategory(str, Enum):
-    CODE = "CODE"
-    DOCUMENT = "DOCUMENT"
-
-
 @dataclass(frozen=True)
-class FileType:
-    """Language and indexing policy for a file extension."""
-
-    language: str
-    category: FileCategory
+class IgnoreSpec:
+    base: Path
+    spec: GitIgnoreSpec
 
 
-FILE_TYPES: dict[str, FileType] = {
-    ".py": FileType("python", FileCategory.CODE),
-    ".js": FileType("javascript", FileCategory.CODE),
-    ".jsx": FileType("javascript", FileCategory.CODE),
-    ".ts": FileType("typescript", FileCategory.CODE),
-    ".tsx": FileType("typescript", FileCategory.CODE),
-    ".go": FileType("go", FileCategory.CODE),
-    ".rs": FileType("rust", FileCategory.CODE),
-    ".java": FileType("java", FileCategory.CODE),
-    ".kt": FileType("kotlin", FileCategory.CODE),
-    ".kts": FileType("kotlin", FileCategory.CODE),
-    ".rb": FileType("ruby", FileCategory.CODE),
-    ".php": FileType("php", FileCategory.CODE),
-    ".c": FileType("c", FileCategory.CODE),
-    ".h": FileType("c", FileCategory.CODE),
-    ".cpp": FileType("cpp", FileCategory.CODE),
-    ".hpp": FileType("cpp", FileCategory.CODE),
-    ".cs": FileType("csharp", FileCategory.CODE),
-    ".swift": FileType("swift", FileCategory.CODE),
-    ".scala": FileType("scala", FileCategory.CODE),
-    ".sbt": FileType("scala", FileCategory.CODE),
-    ".ex": FileType("elixir", FileCategory.CODE),
-    ".exs": FileType("elixir", FileCategory.CODE),
-    ".dart": FileType("dart", FileCategory.CODE),
-    ".lua": FileType("lua", FileCategory.CODE),
-    ".sql": FileType("sql", FileCategory.CODE),
-    ".sh": FileType("bash", FileCategory.CODE),
-    ".bash": FileType("bash", FileCategory.CODE),
-    ".zig": FileType("zig", FileCategory.CODE),
-    ".hs": FileType("haskell", FileCategory.CODE),
-    ".md": FileType("markdown", FileCategory.DOCUMENT),
-    ".yaml": FileType("yaml", FileCategory.DOCUMENT),
-    ".yml": FileType("yaml", FileCategory.DOCUMENT),
-    ".toml": FileType("toml", FileCategory.DOCUMENT),
-    ".json": FileType("json", FileCategory.DOCUMENT),
-}
-
-DEFAULT_IGNORED_DIRS: frozenset[str] = frozenset(
+_DEFAULT_IGNORED_DIRS: frozenset[str] = frozenset(
     {
-        ".git",
-        ".hg",
-        ".svn",
-        "__pycache__",
-        "node_modules",
-        ".venv",
-        "venv",
-        ".tox",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".cache",
-        ".semble",
-        ".next",
-        "dist",
-        "build",
-        ".eggs",
+        ".git/",
+        ".hg/",
+        ".svn/",
+        "__pycache__/",
+        "node_modules/",
+        ".venv/",
+        "venv/",
+        ".tox/",
+        ".mypy_cache/",
+        ".pytest_cache/",
+        ".ruff_cache/",
+        ".cache/",
+        ".semble/",
+        ".next/",
+        "dist/",
+        "build/",
+        ".eggs/",
     }
 )
 
 
-def language_for_path(path: Path) -> str | None:
-    """Return the language for a file path, or None for unknown extensions."""
-    if spec := FILE_TYPES.get(path.suffix.lower()):
-        return spec.language
+def _load_ignore_for_dir(directory: Path) -> GitIgnoreSpec | None:
+    """Loads a gitignore and sembleignore for a dir."""
+    gitignore = directory / ".gitignore"
+    sembleignore = directory / ".sembleignore"
+
+    lines = []
+    if gitignore.is_file():
+        lines.extend(gitignore.read_text(encoding="utf-8", errors="ignore").splitlines())
+    if sembleignore.is_file():
+        lines.extend(sembleignore.read_text(encoding="utf-8", errors="ignore").splitlines())
+    if lines:
+        return GitIgnoreSpec.from_lines(lines)
     return None
 
 
-def filter_extensions(extensions: frozenset[str] | None, *, include_text_files: bool) -> frozenset[str]:
-    """Return the set of file extensions to index."""
-    if extensions is not None:
-        return extensions
-    # Always index code files
-    categories_to_include = {FileCategory.CODE}
-    if include_text_files:
-        categories_to_include.add(FileCategory.DOCUMENT)
-    # Return a default set of extensions
-    return frozenset(ext for ext, spec in FILE_TYPES.items() if spec.category in categories_to_include)
-
-
-def _load_root_gitignore(root: Path) -> GitIgnoreSpec | None:
-    """Load the root-level .gitignore as a spec, if present."""
-    gitignore = root / ".gitignore"
-    if not gitignore.is_file():
-        return None
-    return GitIgnoreSpec.from_lines(gitignore.read_text(encoding="utf-8", errors="ignore").splitlines())
-
-
-def _dir_is_gitignored(gitignore: GitIgnoreSpec, rel: str) -> bool:
-    """Return True if rel (a POSIX path relative to the gitignore root) matches a gitignore pattern for directories."""
-    ignored = False
-    for pattern in gitignore.patterns:
-        if pattern.include is not None and pattern.match_file(rel):
-            ignored = pattern.include
-    return ignored
-
-
-def walk_files(root: Path, extensions: frozenset[str], ignore: frozenset[str] | None = None) -> Iterator[Path]:
+def walk_files(root: Path, extensions: Sequence[str], ignore: Sequence[str] | None = None) -> Iterator[Path]:
     """Yield files under root matching extensions, skipping ignored paths.
 
     Directories matching DEFAULT_IGNORED_DIRS plus any names in ignore are always
     skipped. If the root contains a .gitignore, its patterns are also honoured.
 
     :param root: Root directory to walk.
-    :param extensions: Set of file extensions to include (e.g. {".py", ".js"}).
-    :param ignore: Additional directory names to ignore (e.g. {"build", "dist"}).
+    :param extensions: List of file extensions to match.
+    :param ignore: Additional patterns to ignore.
     :yield: Path to each file under root matching the criteria.
     :ytype: Path
     """
-    ignore_dirs = DEFAULT_IGNORED_DIRS | (ignore or frozenset())
-    gitignore = _load_root_gitignore(root)
-    for dirpath, dirnames, filenames in os.walk(root):
-        rel_dir = Path(dirpath).relative_to(root)
-        kept: list[str] = []
-        for dirname in dirnames:
-            if dirname in ignore_dirs:
+    extensions_set = frozenset(extensions)
+    dir_patterns = list(sorted(_DEFAULT_IGNORED_DIRS)) + list(ignore or [])
+    base_spec = GitIgnoreSpec.from_lines(dir_patterns, backend="simple")
+    s = IgnoreSpec(base=root, spec=base_spec)
+    yield from _walk(root, [s], extensions_set)
+
+
+def _is_ignored(path: Path, specs: list[IgnoreSpec]) -> tuple[bool, bool]:
+    """Check if a path is ignored by any of the provided ignore specs."""
+    is_dir = path.is_dir()
+    ignored = False
+    found = False
+    for ignore_spec in specs:
+        try:
+            # If there is no relative path, this is invalid.
+            relative = path.relative_to(ignore_spec.base)
+        except ValueError:
+            continue
+
+        relative_str = relative.as_posix()
+        # We need to add a trailing slash. Gitignore
+        # matches dirs as trailing '/'.
+        if is_dir:
+            relative_str += "/"
+
+        # Loop over all the patterns
+        for pattern in ignore_spec.spec.patterns:
+            # This pattern doesn't do anything.
+            if pattern.include is None:
                 continue
-            if gitignore is not None and _dir_is_gitignored(gitignore, (rel_dir / dirname).as_posix() + "/"):
-                continue
-            kept.append(dirname)
-        dirnames[:] = kept
-        for filename in sorted(filenames):
-            file_path = Path(dirpath) / filename
-            if file_path.suffix.lower() not in extensions:
-                continue
-            if gitignore is not None and gitignore.match_file((rel_dir / filename).as_posix()):
-                continue
-            yield file_path
+
+            if pattern.match_file(relative_str) is not None:
+                ignored = pattern.include
+                # Bypass extension filter only for negation patterns with a file
+                # extension suffix (e.g. !special.kjs, !*.py). Patterns without
+                # a suffix (e.g. !vendor/, !.github/*) target directories or
+                # broad globs and should not bypass extension filtering.
+                pat = pattern.pattern
+                found = not ignored and isinstance(pat, str) and bool(Path(pat.rstrip("/")).suffix)
+
+    return ignored, found
+
+
+def _walk(
+    directory: Path,
+    inherited_specs: list[IgnoreSpec],
+    extensions: frozenset[str],
+) -> Iterator[Path]:
+    """Recursive function for walking files under a directory."""
+    spec = _load_ignore_for_dir(directory)
+    if spec is not None:
+        inherited_specs = [
+            *inherited_specs,
+            IgnoreSpec(base=directory, spec=spec),
+        ]
+
+    for item in sorted(directory.iterdir()):
+        # Don't follow symlinks
+        if item.is_symlink():
+            continue
+        is_ignored, found = _is_ignored(item, inherited_specs)
+        if is_ignored:
+            continue
+
+        if item.is_dir():
+            yield from _walk(item, inherited_specs, extensions)
+        elif item.is_file() and (found or item.suffix.lower() in extensions):
+            yield item
