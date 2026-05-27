@@ -1,9 +1,12 @@
 from collections import defaultdict
 from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
 
 from semble.types import ContentType
 
+_MAX_FILE_BYTES = 1_000_000  # 1 MB max file size to read and index
+_EMPTY_FILE_BYTES = 128
 _EXTENSION_TO_LANGUAGE = {
     ".4th": "forth",
     ".ada": "ada",
@@ -461,7 +464,7 @@ def detect_language(file_name: Path) -> str | None:
     return _EXTENSION_TO_LANGUAGE.get(file_name.suffix.lower())
 
 
-def get_extensions(types: Sequence[ContentType], extensions: Sequence[str] | None) -> list[str]:
+def get_extensions(types: Sequence[ContentType]) -> list[str]:
     """Returns a list of supported file extensions for the given content types."""
     languages: set[str] = set()
     for content_type in types:
@@ -469,7 +472,35 @@ def get_extensions(types: Sequence[ContentType], extensions: Sequence[str] | Non
     all_extensions: set[str] = set()
     for language in languages:
         all_extensions.update(_LANGUAGE_TO_EXTENSION.get(language, set()))
-    if extensions is not None:
-        all_extensions.update(extensions)
 
     return sorted(all_extensions)
+
+
+class FileStatus(str, Enum):
+    NEWER = "newer"
+    TOO_LARGE = "too_large"
+    EMPTY = "empty"
+    VALID = "valid"
+
+
+def read_file_text(file_path: Path) -> str:
+    """Read a file's text content, replacing invalid characters and silencing read errors."""
+    return file_path.read_text(encoding="utf-8", errors="replace")
+
+
+def get_file_status(file_path: Path, write_time: float | None) -> FileStatus:
+    """Checks if a file should be indexed based on its size and modification time."""
+    stat = file_path.stat()
+    if write_time is not None and stat.st_mtime > write_time:
+        # Index invalid, file invalid
+        return FileStatus.NEWER
+    size = stat.st_size
+    if size > _MAX_FILE_BYTES:
+        # index valid, file invalid
+        return FileStatus.TOO_LARGE
+    if size < _EMPTY_FILE_BYTES and not read_file_text(file_path).strip():
+        # index valid, file invalid
+        return FileStatus.EMPTY
+
+    # Both valid
+    return FileStatus.VALID

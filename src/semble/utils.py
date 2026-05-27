@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -7,6 +8,7 @@ from semble.types import Chunk, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
+DEFAULT_MODEL_NAME = "minishlab/potion-code-16M"
 
 
 def is_git_url(path: str) -> bool:
@@ -33,3 +35,8 @@ def resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | Non
 def format_results(query: str, results: list[SearchResult]) -> dict[str, Any]:
     """Render SearchResult objects as a JSONable object."""
     return {"query": query, "results": [r.to_dict() for r in results]}
+
+
+def resolve_model_name() -> str:
+    """Resolve a model name to a configurable."""
+    return os.environ.get("SEMBLE_MODEL_NAME", DEFAULT_MODEL_NAME)

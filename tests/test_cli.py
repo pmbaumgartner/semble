@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from semble.cli import Agent, _agent_path, _cli_main, _run_index, _run_init, main
+from semble.cli import Agent, _agent_path, _cli_main, _maybe_save_index, _run_init, main
 from semble.types import ContentType, SearchResult
 from tests.conftest import make_chunk
 
@@ -195,51 +195,23 @@ def test_mcp_main_exits_with_message_when_extras_missing(
     assert "pip install 'semble[mcp]'" in capsys.readouterr().err
 
 
-def test_run_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """_run_index creates the output directory and saves the index."""
-    out_dir = tmp_path / "index_output"
-    fake_index = MagicMock()
-    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
-        _run_index(path="/some/path", include_text_files=True, out=str(out_dir))
-    mock_from_path.assert_called_once_with("/some/path", include_text_files=True)
-    assert out_dir.exists()
-    fake_index.save.assert_called_once_with(str(out_dir))
-
-
-def test_index_via_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """_cli_main index subcommand calls _run_index with the correct arguments."""
-    out_dir = tmp_path / "built_index"
-    fake_index = MagicMock()
-    monkeypatch.setattr(sys, "argv", ["semble", "index", "/some/path", "-o", str(out_dir)])
-    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
-        _cli_main()
-    assert out_dir.exists()
-    fake_index.save.assert_called_once_with(str(out_dir))
-
-
-def test_index_git_via_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """_cli_main index subcommand calls _run_index with the correct arguments."""
-    out_dir = tmp_path / "built_index"
-    fake_index = MagicMock()
-    monkeypatch.setattr(sys, "argv", ["semble", "index", "git://xyz.git", "-o", str(out_dir)])
-    with patch("semble.cli.SembleIndex.from_git", return_value=fake_index):
-        _cli_main()
-    assert out_dir.exists()
-    fake_index.save.assert_called_once_with(str(out_dir))
-
-
-def test_cli_search_with_prebuilt_index(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """_cli_main search with --index loads the pre-built index from disk."""
-    chunk = make_chunk("def foo(): pass", "src/foo.py")
-    fake_index = MagicMock()
-    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.95)]
-    monkeypatch.setattr(sys, "argv", ["semble", "search", "query text", ".", "--index", "/some/prebuilt"])
-    with patch("semble.cli.SembleIndex.load_from_disk", return_value=fake_index) as mock_load:
-        _cli_main()
-    mock_load.assert_called_once_with("/some/prebuilt")
-    out = capsys.readouterr().out
-    assert "query text" in out
-    assert "0.95" in out
+@pytest.mark.parametrize(
+    ("command", "argv"),
+    [
+        ("search", ["semble", "search", "query", "/no/such/path"]),
+        ("find-related", ["semble", "find-related", "src/foo.py", "1", "/no/such/path"]),
+    ],
+)
+def test_cli_path_not_found(
+    command: str, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """index, search, and find-related exit 1 with a friendly message when the path does not exist."""
+    monkeypatch.setattr(sys, "argv", argv)
+    with patch("semble.cli._build_index", side_effect=FileNotFoundError("Path does not exist: /no/such/path")):
+        with pytest.raises(SystemExit) as exc_info:
+            _cli_main()
+    assert exc_info.value.code == 1
+    assert "Path does not exist" in capsys.readouterr().err
 
 
 def test_include_text_files_cli_deprecated(
@@ -285,6 +257,16 @@ def test_cli_content_argument(
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
         _cli_main()
     assert list(mock_from_path.call_args.kwargs["content"]) == expected
+
+
+def test_maybe_save_index_logs_error_on_save_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    """_maybe_save_index prints to stderr when index.save raises."""
+    fake_index = MagicMock()
+    fake_index.loaded_from_disk = False
+    fake_index.save.side_effect = OSError("disk full")
+    with patch("semble.cli.find_index_from_cache_folder", return_value=Path("/cache")):
+        _maybe_save_index(fake_index, "/some/path")
+    assert "Error saving index" in capsys.readouterr().err
 
 
 def test_agent_file_tools_are_bash_only() -> None:

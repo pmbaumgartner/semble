@@ -6,7 +6,8 @@ import pytest
 from model2vec import StaticModel
 
 from semble import SembleIndex
-from semble.index.create import _MAX_FILE_BYTES, create_index_from_path
+from semble.index.create import create_index_from_path
+from semble.index.files import _MAX_FILE_BYTES, FileStatus, get_file_status
 from semble.types import ContentType
 from tests.conftest import make_chunk
 
@@ -72,6 +73,13 @@ def test_oversized_file_is_skipped(mock_model: StaticModel, tmp_path: Path) -> N
     (tmp_path / "big.py").write_bytes(b"x" * (_MAX_FILE_BYTES + 1))
     with pytest.raises(ValueError):  # no indexable content remains
         create_index_from_path(tmp_path, mock_model)
+
+
+def test_tiny_invalid_utf8_file_status_does_not_crash(tmp_path: Path) -> None:
+    """Tiny files with invalid UTF-8 bytes are treated as non-empty."""
+    path = tmp_path / "latin1.py"
+    path.write_bytes(b"\xff")
+    assert get_file_status(path, None) is FileStatus.VALID
 
 
 def test_index_language_counts(indexed_index: SembleIndex) -> None:
@@ -185,6 +193,22 @@ def test_roundtrip(tmp_path: Path, indexed_index: SembleIndex) -> None:
     assert index_2._root == indexed_index._root
 
 
+def test_load_save_roundtrip_preserves_manifest(tmp_path: Path, indexed_index: SembleIndex) -> None:
+    """load_from_disk followed by save must not clobber file_paths with an empty list."""
+    save_a = tmp_path / "a"
+    save_b = tmp_path / "b"
+    indexed_index.save(save_a)
+    with patch.object(StaticModel, "from_pretrained"):
+        loaded = SembleIndex.load_from_disk(save_a)
+    loaded.save(save_b)
+    import json
+
+    manifest_a = json.loads((save_a / "metadata.json").read_text())["file_paths"]
+    manifest_b = json.loads((save_b / "metadata.json").read_text())["file_paths"]
+    assert manifest_b == manifest_a
+    assert len(manifest_b) > 0
+
+
 def test_load_non_existent(tmp_path: Path, indexed_index: SembleIndex) -> None:
     """Test that saving and loading a folder leads to the same data."""
     with pytest.raises(FileNotFoundError):
@@ -208,3 +232,22 @@ def test_load_from_disk_missing_files_reports_them(tmp_path: Path) -> None:
     assert "metadata.json" in error_msg
     # The file we did create should NOT be listed as missing.
     assert "chunks.json" not in error_msg
+
+
+def test_from_path_uses_cache_when_valid(tmp_project: Path) -> None:
+    """from_path returns the cached index directly when get_validated_cache hits."""
+    fake_cached = MagicMock(spec=SembleIndex)
+    with patch("semble.index.index.get_validated_cache", return_value=tmp_project / "cache"):
+        with patch.object(SembleIndex, "load_from_disk", return_value=fake_cached):
+            result = SembleIndex.from_path(tmp_project)
+    assert result is fake_cached
+
+
+@pytest.mark.parametrize("ref", [None, "v1.0"])
+def test_from_git_uses_cache_when_valid(ref: str | None) -> None:
+    """from_git uses the cache for both URL-only and URL@ref cache keys."""
+    fake_cached = MagicMock(spec=SembleIndex)
+    with patch("semble.index.index.get_validated_cache", return_value=Path("/cache")):
+        with patch.object(SembleIndex, "load_from_disk", return_value=fake_cached):
+            result = SembleIndex.from_git("https://github.com/org/repo.git", ref=ref)
+    assert result is fake_cached
