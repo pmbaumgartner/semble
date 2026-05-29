@@ -4,7 +4,7 @@ import os
 import re
 from typing import Any
 
-from semble.types import Chunk, SearchResult
+from semble.types import Chunk, DuplicateCluster, SearchResult
 
 _GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
 _SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
@@ -35,6 +35,11 @@ def resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | Non
 def format_results(query: str, results: list[SearchResult]) -> dict[str, Any]:
     """Render SearchResult objects as a JSONable object."""
     return {"query": query, "results": [r.to_dict() for r in results]}
+
+
+def format_duplicate_clusters(label: str, clusters: list[DuplicateCluster]) -> dict[str, Any]:
+    """Render DuplicateCluster objects as a JSONable object."""
+    return {"query": label, "clusters": [cluster.to_dict() for cluster in clusters]}
 
 
 def resolve_model_name() -> str:

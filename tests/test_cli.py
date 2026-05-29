@@ -1,3 +1,4 @@
+import json
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -6,8 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from semble.cli import Agent, _agent_path, _cli_main, _maybe_save_index, _run_init, main
+from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.types import ContentType, SearchResult
-from tests.conftest import make_chunk
+from tests.conftest import make_chunk, make_duplicate_cluster
 
 _CLAUDE_FILE_PATH = _agent_path(Agent.CLAUDE)
 
@@ -91,6 +93,143 @@ def test_cli_find_related(
         assert expected_stderr in captured.err
 
 
+def test_cli_find_duplicates_maps_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_cli_main find-duplicates maps CLI options to index.find_duplicates."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = [make_duplicate_cluster()]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "semble",
+            "find-duplicates",
+            "/some/path",
+            "-k",
+            "7",
+            "--candidate-k",
+            "19",
+            "--language",
+            "python",
+            "--include",
+            "src",
+            "--include",
+            "lib",
+            "--exclude",
+            "tests",
+            "--exclude",
+            "src/generated",
+            "--include-tests",
+            "--include-data",
+            "--include-scaffolding",
+            "--min-lines",
+            "4",
+            "--min-score",
+            "0.25",
+            "--min-structural-score",
+            "0.42",
+            "--min-cluster-size",
+            "3",
+        ],
+    )
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
+        _cli_main()
+
+    mock_from_path.assert_called_once_with(
+        "/some/path",
+        content=[ContentType.CODE],
+    )
+    fake_index.find_duplicates.assert_called_once_with(
+        top_k=7,
+        candidate_k=19,
+        min_lines=4,
+        min_score=0.25,
+        min_structural_score=0.42,
+        min_cluster_size=3,
+        filter_languages=["python"],
+        include_paths=["src", "lib"],
+        exclude_paths=["tests", "src/generated"],
+        include_tests=True,
+        include_data=True,
+        include_scaffolding=True,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["query"] == "Duplicate clusters"
+    assert out["clusters"][0]["members"][0]["file_path"] == "src/left.py"
+    assert out["clusters"][0]["pairs"][0]["signals"]["semantic_score"] == 0.9
+
+
+def test_cli_find_duplicates_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_cli_main find-duplicates prints a Semble-style empty state."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "/some/path"])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
+        _cli_main()
+
+    mock_from_path.assert_called_once_with(
+        "/some/path",
+        content=[ContentType.CODE],
+    )
+    fake_index.find_duplicates.assert_called_once_with(
+        top_k=5,
+        candidate_k=12,
+        min_lines=8,
+        min_score=0.0,
+        min_structural_score=DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size=2,
+        filter_languages=None,
+        include_paths=None,
+        exclude_paths=None,
+        include_tests=False,
+        include_data=False,
+        include_scaffolding=False,
+    )
+    assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
+
+
+def test_cli_find_duplicates_uses_git_url(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """find-duplicates indexes git URLs through SembleIndex.from_git."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "https://github.com/org/repo"])
+    with patch("semble.cli.SembleIndex.from_git", return_value=fake_index) as mock_from_git:
+        _cli_main()
+
+    mock_from_git.assert_called_once_with(
+        "https://github.com/org/repo",
+        content=[ContentType.CODE],
+    )
+    assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
+
+
+def test_cli_find_duplicates_content_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """find-duplicates uses the shared --content parser before loading the index."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["semble", "find-duplicates", "/some/path", "--content", "docs", "config"],
+    )
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
+        _cli_main()
+    mock_from_path.assert_called_once_with(
+        "/some/path",
+        content=[ContentType.DOCS, ContentType.CONFIG],
+    )
+
+
 @pytest.mark.parametrize("agent", list(Agent))
 def test_init_creates_file(
     agent: Agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -150,10 +289,24 @@ def test_main_dispatches_to_cli(
     assert "query text" in capsys.readouterr().out
 
 
+def test_main_dispatches_find_duplicates_to_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """main() routes find-duplicates through the CLI dispatcher."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "/some/path"])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+        main()
+
+    assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_stdout", "expect_system_exit"),
     [
-        (["semble", "--help"], "find-related", True),
+        (["semble", "--help"], "find-duplicates", True),
         (["semble", "search", "query", "/some/path"], "query", False),
     ],
 )
@@ -276,3 +429,11 @@ def test_agent_file_tools_are_bash_only() -> None:
     tools = [t.strip() for t in tools_line.removeprefix("tools:").split(",")]
     assert set(tools) == {"Bash", "Read"}, f"Unexpected tools in agent file: {tools}"
     assert not any("mcp__" in t for t in tools)
+
+
+@pytest.mark.parametrize("agent", list(Agent))
+def test_agent_files_document_find_duplicates_and_current_content_flag(agent: Agent) -> None:
+    """Every bundled agent template documents duplicate discovery and avoids deprecated content flags."""
+    content = files("semble").joinpath(f"agents/{agent.value}.md").read_text(encoding="utf-8")
+    assert "semble find-duplicates" in content
+    assert "--include-text-files" not in content

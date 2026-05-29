@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cache
 from logging import getLogger
+from typing import cast
 
 from tree_sitter import Node, Parser
 from tree_sitter_language_pack import DownloadError, LanguageNotFoundError, SupportedLanguage, get_parser
@@ -18,6 +19,16 @@ _MIN_CHUNK_SIZE = 50
 def is_supported_language(language: str) -> bool:
     """Check if the language is supported by tree-sitter."""
     return language in ALL_LANGUAGES
+
+
+def get_parser_for_language(language: str) -> Parser | None:
+    """Return a cached tree-sitter parser for a supported language."""
+    if not is_supported_language(language):
+        return None
+    try:
+        return _cached_get_parser(cast(SupportedLanguage, language))
+    except Exception:
+        return None
 
 
 @dataclass

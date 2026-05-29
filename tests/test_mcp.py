@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -8,14 +9,19 @@ import pytest
 from model2vec import StaticModel
 
 from semble.mcp import _CACHE_MAX_SIZE, _IndexCache, create_server, serve
-from semble.types import Chunk, SearchResult
+from semble.types import Chunk, DuplicateCluster, SearchResult
 from semble.utils import format_results, is_git_url, resolve_chunk
-from tests.conftest import make_chunk
+from tests.conftest import make_chunk, make_duplicate_cluster
 
 
 def _tool_text(result: Any) -> str:
     """Extract the text string from a FastMCP call_tool result."""
     return result[0][0].text
+
+
+def _tool_json(result: Any) -> dict[str, Any]:
+    """Extract and parse the JSON string from a FastMCP call_tool result."""
+    return json.loads(_tool_text(result))
 
 
 async def _call_tool(
@@ -24,7 +30,7 @@ async def _call_tool(
     args: dict[str, Any],
     *,
     index_method: str,
-    index_return: list[SearchResult],
+    index_return: list[SearchResult | DuplicateCluster],
     index_chunks: list[Chunk] | None = None,
     default_source: str | None = "/some/path",
 ) -> str:
@@ -167,10 +173,11 @@ async def test_index_cache_ignores_cache_save_failure(cache: _IndexCache, tmp_pa
     [
         ("search", {"query": "foo"}),
         ("find_related", {"file_path": "src/foo.py", "line": 10}),
+        ("find_duplicates", {}),
     ],
 )
 async def test_tool_no_repo_no_default(cache: _IndexCache, tool: str, args: dict[str, object]) -> None:
-    """Both tools return an error message when no repo and no default source are given."""
+    """Tools return an error message when no repo and no default source are given."""
     server = create_server(cache, default_source=None)
     result = await server.call_tool(tool, args)
     assert "No repo specified" in _tool_text(result)
@@ -182,10 +189,11 @@ async def test_tool_no_repo_no_default(cache: _IndexCache, tool: str, args: dict
     [
         ("search", {"query": "foo", "repo": "https://github.com/x/y"}),
         ("find_related", {"file_path": "src/foo.py", "line": 1, "repo": "https://github.com/x/y"}),
+        ("find_duplicates", {"repo": "https://github.com/x/y"}),
     ],
 )
 async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str, object]) -> None:
-    """Both tools return a friendly error message when indexing fails."""
+    """Tools return a friendly error message when indexing fails."""
     with patch("semble.mcp.SembleIndex.from_git", side_effect=RuntimeError("clone failed")):
         server = create_server(cache)
         result = await server.call_tool(tool, args)
@@ -243,6 +251,24 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             ["No chunk found"],
             id="find_related_unknown_file",
         ),
+        pytest.param(
+            "find_duplicates",
+            {"top_k": 2},
+            "find_duplicates",
+            [make_duplicate_cluster()],
+            None,
+            ['"Duplicate clusters"', '"src/left.py"'],
+            id="find_duplicates_with_results",
+        ),
+        pytest.param(
+            "find_duplicates",
+            {},
+            "find_duplicates",
+            [],
+            None,
+            ["No duplicate clusters found."],
+            id="find_duplicates_no_results",
+        ),
     ],
 )
 async def test_tool_output(
@@ -250,14 +276,62 @@ async def test_tool_output(
     tool: str,
     args: dict[str, Any],
     method: str,
-    results: list[SearchResult],
+    results: list[SearchResult | DuplicateCluster],
     chunks: list[Chunk] | None,
     expected_substrings: list[str],
 ) -> None:
-    """Search and find_related format results (or an empty-state message) through the server."""
+    """Tools format results (or an empty-state message) through the server."""
     text = await _call_tool(cache, tool, args, index_method=method, index_return=results, index_chunks=chunks)
     for substring in expected_substrings:
         assert substring in text
+
+
+@pytest.mark.anyio
+async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
+    """find_duplicates runs the duplicate scan through asyncio.to_thread with the public MCP options."""
+    fake_index = MagicMock()
+    with (
+        patch.object(cache, "get", new=AsyncMock(return_value=fake_index)) as mock_get,
+        patch("semble.mcp.asyncio.to_thread", new=AsyncMock(return_value=[make_duplicate_cluster()])) as mock_to_thread,
+    ):
+        server = create_server(cache, default_source="/some/path")
+        result = await server.call_tool(
+            "find_duplicates",
+            {
+                "top_k": 7,
+                "candidate_k": 19,
+                "language": "python",
+                "include_paths": ["src", "lib"],
+                "exclude_paths": ["src/generated", "tests"],
+                "include_tests": True,
+                "include_data": True,
+                "include_scaffolding": True,
+                "min_lines": 4,
+                "min_score": 0.25,
+                "min_structural_score": 0.42,
+                "min_cluster_size": 3,
+            },
+        )
+
+    out = _tool_json(result)
+    assert out["query"] == "Duplicate clusters"
+    assert out["clusters"][0]["members"][0]["file_path"] == "src/left.py"
+    mock_get.assert_awaited_once_with("/some/path")
+    mock_to_thread.assert_awaited_once_with(
+        fake_index.find_duplicates,
+        top_k=7,
+        candidate_k=19,
+        min_lines=4,
+        min_score=0.25,
+        min_structural_score=0.42,
+        min_cluster_size=3,
+        filter_languages=["python"],
+        include_paths=["src", "lib"],
+        exclude_paths=["src/generated", "tests"],
+        include_tests=True,
+        include_data=True,
+        include_scaffolding=True,
+    )
 
 
 @pytest.mark.anyio
@@ -357,8 +431,18 @@ async def test_index_cache_propagates_model_error(tmp_path: Path) -> None:
         ("git@github.com:org/repo", "search", {"query": "foo"}),
         ("file:///home/user/secret", "find_related", {"file_path": "src/foo.py", "line": 1}),
         ("ssh://internal-host/repo", "find_related", {"file_path": "src/foo.py", "line": 1}),
+        ("file:///home/user/secret", "find_duplicates", {}),
+        ("ssh://internal-host/repo", "find_duplicates", {}),
     ],
-    ids=["file_search", "ssh_search", "scp_search", "file_find_related", "ssh_find_related"],
+    ids=[
+        "file_search",
+        "ssh_search",
+        "scp_search",
+        "file_find_related",
+        "ssh_find_related",
+        "file_find_duplicates",
+        "ssh_find_duplicates",
+    ],
 )
 async def test_tool_rejects_unsafe_repo(
     cache: _IndexCache, repo: str, tool: str, extra_args: dict[str, object]

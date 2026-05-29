@@ -313,6 +313,9 @@ Add to `~/.config/zed/settings.json` (or `.zed/settings.json` in your project):
 |------|-------------|
 | `search` | Search a codebase with a natural-language or code query. Pass `repo` as a local directory path or an https:// git URL. |
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
+| `find_duplicates` | Find grouped duplicate implementations and refactoring candidates in a codebase. |
+
+`find_duplicates` also accepts duplicate-specific filters: `language`, `include_paths`, `exclude_paths`, `include_tests`, `include_data`, `include_scaffolding`, `min_lines`, `min_structural_score`, and `min_cluster_size`.
 
 By default the MCP server indexes only code files. To also index documentation, config, or everything, append `--content docs`, `--content config`, or `--content all` to the server command, or a combination, e.g. `--content code docs`. For example, in Claude Code: `claude mcp add semble -s user -- uvx --from "semble[mcp]" semble --content all`.
 
@@ -351,9 +354,39 @@ semble search "deployment guide" ./my-project --content docs   # or: config, all
 
 # Find code similar to a known location
 semble find-related src/auth.py 42 ./my-project
+
+# Find duplicate clusters in a local repo
+semble find-duplicates ./my-project
+
+# Find duplicate clusters in a remote repo
+semble find-duplicates https://github.com/MinishLab/model2vec
+
+# Limit duplicate discovery to one language
+semble find-duplicates ./my-project --language python
+
+# Inspect more semantic neighbors per chunk for higher duplicate recall
+semble find-duplicates ./my-project --candidate-k 24
+
+# Loosen the structural-similarity floor
+semble find-duplicates ./my-project --min-structural-score 0.35
+
+# Focus on larger duplicate clusters
+semble find-duplicates ./my-project --min-cluster-size 3
+
+# Include tests in duplicate discovery
+semble find-duplicates ./my-project --include-tests
+
+# Include static data/config chunks in duplicate discovery
+semble find-duplicates ./my-project --include-data
+
+# Include import/header/attribute scaffolding in duplicate scoring
+semble find-duplicates ./my-project --include-scaffolding
+
+# Exclude tests and generated code from duplicate discovery
+semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`--content` accepts `code` (default), `docs`, `config`, or `all`. `path` defaults to the current directory when omitted; git URLs are accepted. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
+`--content` accepts `code` (default), `docs`, `config`, or `all`. `path` defaults to the current directory when omitted; git URLs are accepted. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and skips test-looking chunks unless `--include-tests` is passed. The CLI `find-duplicates` command applies `--include`, `--exclude`, `--include-tests`, `--include-data`, and `--include-scaffolding` as duplicate-scan filters without changing the indexed file set.
 
 <details>
 <summary>Controlling which files are indexed</summary>
@@ -434,6 +467,9 @@ results = index.search("save model to disk", top_k=3)
 
 # Find code similar to a specific result
 related = index.find_related(results[0], top_k=3)
+
+# Find grouped duplicate implementations
+duplicates = index.find_duplicates(top_k=3)
 
 # Each result exposes the matched chunk
 result = results[0]

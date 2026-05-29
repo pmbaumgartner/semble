@@ -11,10 +11,11 @@ from pathlib import Path
 from model2vec.utils import get_package_extras
 
 from semble.cache import find_index_from_cache_folder
+from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.stats import format_savings_report
 from semble.types import ContentType
-from semble.utils import format_results, is_git_url, resolve_chunk
+from semble.utils import format_duplicate_clusters, format_results, is_git_url, resolve_chunk
 
 
 class Agent(str, Enum):
@@ -27,7 +28,7 @@ class Agent(str, Enum):
 
 
 _DEFAULT_AGENT = Agent.CLAUDE
-_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "init", "savings", "-h", "--help"})
+_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "find-duplicates", "init", "savings", "-h", "--help"})
 
 
 def _build_index(path: str, content: list[ContentType]) -> SembleIndex:
@@ -163,6 +164,29 @@ def _run_find_related(path: str, file_path: str, line: int, top_k: int, content:
     _maybe_save_index(index, path)
 
 
+def _run_find_duplicates(args: argparse.Namespace) -> None:
+    """Handle the `find-duplicates` subcommand."""
+    content = _resolve_content(args.content, args.include_text_files)
+    index = _load_index(args.path, content)
+    clusters = index.find_duplicates(
+        top_k=args.top_k,
+        candidate_k=args.candidate_k,
+        min_lines=args.min_lines,
+        min_score=args.min_score,
+        min_structural_score=args.min_structural_score,
+        min_cluster_size=args.min_cluster_size,
+        filter_languages=[args.language] if args.language else None,
+        include_paths=args.include_paths,
+        exclude_paths=args.exclude_paths,
+        include_tests=args.include_tests,
+        include_data=args.include_data,
+        include_scaffolding=args.include_scaffolding,
+    )
+    out = format_duplicate_clusters("Duplicate clusters", clusters) if clusters else {"error": "No duplicate clusters found."}
+    print(json.dumps(out))
+    _maybe_save_index(index, args.path)
+
+
 def _cli_main() -> None:
     parser = argparse.ArgumentParser(prog="semble")
     sub = parser.add_subparsers(dest="command")
@@ -179,6 +203,54 @@ def _cli_main() -> None:
     related_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
     related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
     _add_content_args(related_p)
+
+    duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code clusters.")
+    duplicates_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
+    duplicates_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of duplicate clusters (default: 5).")
+    duplicates_p.add_argument(
+        "--candidate-k",
+        type=int,
+        default=12,
+        help="Semantic neighbors to inspect per chunk before scoring (default: 12).",
+    )
+    duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
+    duplicates_p.add_argument(
+        "--include",
+        action="append",
+        dest="include_paths",
+        help="File or directory scope to include in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--exclude",
+        action="append",
+        dest="exclude_paths",
+        help="File or directory scope to exclude from duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include test files in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-data",
+        action="store_true",
+        help="Include static data/config chunks in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-scaffolding",
+        action="store_true",
+        help="Include import/header/attribute scaffolding in duplicate discovery.",
+    )
+    duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
+    duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
+    duplicates_p.add_argument(
+        "--min-structural-score",
+        type=float,
+        default=DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        help=f"Minimum structural similarity score (default: {DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE:.2f}).",
+    )
+    duplicates_p.add_argument("--min-cluster-size", type=int, default=2, help="Minimum chunks per cluster (default: 2).")
+    _add_content_args(duplicates_p)
 
     init_p = sub.add_parser("init", help="Write a semble sub-agent file for your coding agent.")
     init_p.add_argument(
@@ -205,3 +277,5 @@ def _cli_main() -> None:
         _run_find_related(
             args.path, args.file_path, args.line, args.top_k, _resolve_content(args.content, args.include_text_files)
         )
+    elif args.command == "find-duplicates":
+        _run_find_duplicates(args)

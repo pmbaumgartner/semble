@@ -16,13 +16,18 @@ from bm25s import BM25
 from model2vec.model import StaticModel
 
 from semble.cache import get_validated_cache
+from semble.duplicates.clustering import cluster_duplicate_pairs
+from semble.duplicates.search import (
+    DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+    find_duplicate_pairs,
+)
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
 from semble.index.files import read_file_text
 from semble.index.types import PersistencePath
 from semble.search import _search_semantic, search
 from semble.stats import save_search_stats
-from semble.types import CallType, Chunk, ContentType, IndexStats, SearchResult
+from semble.types import CallType, Chunk, ContentType, DuplicateCluster, IndexStats, SearchResult
 
 _GIT_CLONE_TIMEOUT = int(os.environ.get("SEMBLE_CLONE_TIMEOUT", 60))
 _DEFAULT_CONTENT: tuple[ContentType, ...] = (ContentType.CODE,)
@@ -237,6 +242,60 @@ class SembleIndex:
         results = [r for r in results if r.chunk != target][:top_k]
         save_search_stats(results, CallType.FIND_RELATED, self._file_sizes)
         return results
+
+    def find_duplicates(
+        self,
+        *,
+        top_k: int = 5,
+        candidate_k: int = 12,
+        min_lines: int = 8,
+        min_score: float = 0.0,
+        min_structural_score: float = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size: int = 2,
+        filter_languages: Sequence[str] | None = None,
+        include_paths: Sequence[str] | None = None,
+        exclude_paths: Sequence[str] | None = None,
+        include_tests: bool = False,
+        include_data: bool = False,
+        include_scaffolding: bool = False,
+    ) -> list[DuplicateCluster]:
+        """Return ranked duplicate-code clusters from indexed chunks.
+
+        :param top_k: Number of duplicate clusters to return.
+        :param candidate_k: Number of semantic neighbors to inspect per eligible chunk.
+        :param min_lines: Minimum content line count required for each side.
+        :param min_score: Minimum final duplicate score for a pair edge.
+        :param min_structural_score: Minimum structural similarity score for a pair edge.
+        :param min_cluster_size: Minimum number of chunks in a returned cluster.
+        :param filter_languages: Optional exact language filters.
+        :param include_paths: Optional repo-relative file or directory scopes to include.
+        :param exclude_paths: Optional repo-relative file or directory scopes to exclude.
+        :param include_tests: Whether test-looking paths are eligible duplicate candidates.
+            This is independent of indexing; tests may be present in the index but are
+            skipped here by default.
+        :param include_data: Whether static data/config chunks are eligible duplicate candidates.
+        :param include_scaffolding: Whether import/header/attribute scaffolding contributes to duplicate discovery.
+        :return: Ranked list of duplicate clusters, best match first.
+        """
+        if top_k <= 0:
+            return []
+
+        pairs = find_duplicate_pairs(
+            self.chunks,
+            self._semantic_index,
+            self._language_mapping,
+            candidate_k=candidate_k,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            filter_languages=filter_languages,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            include_data=include_data,
+            include_scaffolding=include_scaffolding,
+        )
+        return cluster_duplicate_pairs(pairs, min_cluster_size=min_cluster_size)[:top_k]
 
     def _get_selector_vector(
         self, filter_languages: list[str] | None = None, filter_paths: list[str] | None = None

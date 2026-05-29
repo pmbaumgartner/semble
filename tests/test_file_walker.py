@@ -95,12 +95,33 @@ def test_walk_files_filtering(
 
 
 def test_walk_files_prunes_ignored_dirs(tmp_path: Path) -> None:
-    """Ignored directories are pruned so os.walk never descends into them."""
+    """Ignored directories are pruned before traversal."""
     _touch(tmp_path / "src" / "a.py")
     _touch(tmp_path / "node_modules" / "deep" / "deeper" / "b.js")
 
     visited = list(walk_files(tmp_path, [".py", ".js"]))
     assert not any("node_modules" in str(v) for v in visited), visited
+
+
+def test_walk_files_yields_supported_test_paths(tmp_path: Path) -> None:
+    """The file walker yields normally indexable test-looking files."""
+    files = [
+        "src/keep.go",
+        "src/foo_test.go",
+        "Tests/FooTest.php",
+        "src/FooTest.java",
+        "src/foo.spec.ts",
+        "src/test_helper.rb",
+    ]
+    for rel in files:
+        _touch(tmp_path / rel)
+
+    found = {
+        p.relative_to(tmp_path).as_posix()
+        for p in walk_files(tmp_path, frozenset({".go", ".php", ".java", ".ts", ".rb"}))
+    }
+
+    assert found == set(files)
 
 
 def test_is_ignored_skips_spec_with_unrelated_base(tmp_path: Path) -> None:
