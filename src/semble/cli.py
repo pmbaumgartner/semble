@@ -15,7 +15,7 @@ from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.stats import format_savings_report
 from semble.types import ContentType
-from semble.utils import _format_duplicate_clusters, format_results, is_git_url, resolve_chunk
+from semble.utils import format_duplicate_clusters, format_results, is_git_url, resolve_chunk
 
 
 class Agent(str, Enum):
@@ -168,26 +168,22 @@ def _run_find_duplicates(args: argparse.Namespace) -> None:
     """Handle the `find-duplicates` subcommand."""
     content = _resolve_content(args.content, args.include_text_files)
     index = _load_index(args.path, content)
-    print(
-        _format_duplicate_clusters(
-            "Duplicate clusters",
-            index.find_duplicates(
-                top_k=args.top_k,
-                candidate_k=args.candidate_k,
-                min_lines=args.min_lines,
-                min_score=args.min_score,
-                min_structural_score=args.min_structural_score,
-                min_cluster_size=args.min_cluster_size,
-                filter_languages=[args.language] if args.language else None,
-                include_paths=args.include_paths,
-                exclude_paths=args.exclude_paths,
-                include_tests=args.include_tests,
-                include_data=args.include_data,
-                include_scaffolding=args.include_scaffolding,
-            ),
-            empty_message="No duplicate clusters found.",
-        )
+    clusters = index.find_duplicates(
+        top_k=args.top_k,
+        candidate_k=args.candidate_k,
+        min_lines=args.min_lines,
+        min_score=args.min_score,
+        min_structural_score=args.min_structural_score,
+        min_cluster_size=args.min_cluster_size,
+        filter_languages=[args.language] if args.language else None,
+        include_paths=args.include_paths,
+        exclude_paths=args.exclude_paths,
+        include_tests=args.include_tests,
+        include_data=args.include_data,
+        include_scaffolding=args.include_scaffolding,
     )
+    out = format_duplicate_clusters("Duplicate clusters", clusters) if clusters else {"error": "No duplicate clusters found."}
+    print(json.dumps(out))
     _maybe_save_index(index, args.path)
 
 

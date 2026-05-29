@@ -1,3 +1,4 @@
+import json
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -154,10 +155,10 @@ def test_cli_find_duplicates_maps_options(
         include_data=True,
         include_scaffolding=True,
     )
-    out = capsys.readouterr().out
-    assert "Duplicate clusters" in out
-    assert "src/left.py" in out
-    assert "semantic=0.900" in out
+    out = json.loads(capsys.readouterr().out)
+    assert out["query"] == "Duplicate clusters"
+    assert out["clusters"][0]["members"][0]["file_path"] == "src/left.py"
+    assert out["clusters"][0]["pairs"][0]["signals"]["semantic_score"] == 0.9
 
 
 def test_cli_find_duplicates_empty_state(
@@ -189,7 +190,7 @@ def test_cli_find_duplicates_empty_state(
         include_data=False,
         include_scaffolding=False,
     )
-    assert "No duplicate clusters found." in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
 
 
 def test_cli_find_duplicates_uses_git_url(
@@ -207,7 +208,26 @@ def test_cli_find_duplicates_uses_git_url(
         "https://github.com/org/repo",
         content=[ContentType.CODE],
     )
-    assert "No duplicate clusters found." in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
+
+
+def test_cli_find_duplicates_content_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """find-duplicates uses the shared --content parser before loading the index."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["semble", "find-duplicates", "/some/path", "--content", "docs", "config"],
+    )
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
+        _cli_main()
+    mock_from_path.assert_called_once_with(
+        "/some/path",
+        content=[ContentType.DOCS, ContentType.CONFIG],
+    )
 
 
 @pytest.mark.parametrize("agent", list(Agent))
@@ -280,7 +300,7 @@ def test_main_dispatches_find_duplicates_to_cli(
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
         main()
 
-    assert "No duplicate clusters found." in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
 
 
 @pytest.mark.parametrize(
@@ -409,3 +429,11 @@ def test_agent_file_tools_are_bash_only() -> None:
     tools = [t.strip() for t in tools_line.removeprefix("tools:").split(",")]
     assert set(tools) == {"Bash", "Read"}, f"Unexpected tools in agent file: {tools}"
     assert not any("mcp__" in t for t in tools)
+
+
+@pytest.mark.parametrize("agent", list(Agent))
+def test_agent_files_document_find_duplicates_and_current_content_flag(agent: Agent) -> None:
+    """Every bundled agent template documents duplicate discovery and avoids deprecated content flags."""
+    content = files("semble").joinpath(f"agents/{agent.value}.md").read_text(encoding="utf-8")
+    assert "semble find-duplicates" in content
+    assert "--include-text-files" not in content

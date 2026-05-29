@@ -16,8 +16,8 @@ from semble.cache import save_index_to_cache
 from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.index.dense import load_model
-from semble.types import ContentType
-from semble.utils import _format_duplicate_clusters, format_results, is_git_url, resolve_chunk
+from semble.types import ContentType, DuplicateCluster
+from semble.utils import format_duplicate_clusters, format_results, is_git_url, resolve_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,13 @@ _REPO_DESCRIPTION = (
 )
 
 _CACHE_MAX_SIZE = 10  # Max number of cached indexes to keep in memory
+
+
+def _duplicate_clusters_response(clusters: list[DuplicateCluster]) -> str:
+    """Return the MCP JSON response for duplicate cluster results."""
+    if not clusters:
+        return json.dumps({"error": "No duplicate clusters found."})
+    return json.dumps(format_duplicate_clusters("Duplicate clusters", clusters))
 
 
 async def _get_index(
@@ -60,7 +67,8 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             "Call `find_duplicates` to identify grouped duplicate implementations and refactoring candidates. "
             "When working in a local project, pass the project root as `repo`. "
             "For remote repos, pass an explicit https:// URL. Never guess or infer URLs. "
-            "To search Markdown, YAML, JSON, or TOML, start the server with `--include-text-files`. "
+            "To search Markdown, YAML, JSON, or TOML, start the server with `--content docs`, "
+            "`--content config`, or `--content all`. "
             "Prefer these tools over Grep, Glob, or Read for any question about how code works."
         ),
     )
@@ -174,11 +182,7 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
             include_data=include_data,
             include_scaffolding=include_scaffolding,
         )
-        return _format_duplicate_clusters(
-            "Duplicate clusters",
-            clusters,
-            empty_message="No duplicate clusters found.",
-        )
+        return _duplicate_clusters_response(clusters)
 
     return server
 

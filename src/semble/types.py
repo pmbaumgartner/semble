@@ -78,6 +78,16 @@ class DuplicateSignals:
     ast_type_jaccard: float | None = None
     ast_shape_jaccard: float | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Dump duplicate similarity signals to a dict."""
+        return {
+            "semantic_score": self.semantic_score,
+            "structural_score": self.structural_score,
+            "token_jaccard": self.token_jaccard,
+            "ast_type_jaccard": self.ast_type_jaccard,
+            "ast_shape_jaccard": self.ast_shape_jaccard,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class DuplicatePair:
@@ -89,6 +99,17 @@ class DuplicatePair:
     signals: DuplicateSignals
     left_content: str
     right_content: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Dump a duplicate pair to a JSONable dict."""
+        return {
+            "left": self.left.to_dict(),
+            "right": self.right.to_dict(),
+            "score": self.score,
+            "signals": self.signals.to_dict(),
+            "left_content": self.left_content,
+            "right_content": self.right_content,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +123,14 @@ class DuplicateCluster:
     def score(self) -> float:
         """Ranking score for the strongest pair in the cluster."""
         return self.pairs[0].score if self.pairs else 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Dump a duplicate cluster to a JSONable dict."""
+        return {
+            "score": self.score,
+            "members": [member.to_dict() for member in self.members],
+            "pairs": [pair.to_dict() for pair in self.pairs],
+        }
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -16,6 +17,11 @@ from tests.conftest import make_chunk, make_duplicate_cluster
 def _tool_text(result: Any) -> str:
     """Extract the text string from a FastMCP call_tool result."""
     return result[0][0].text
+
+
+def _tool_json(result: Any) -> dict[str, Any]:
+    """Extract and parse the JSON string from a FastMCP call_tool result."""
+    return json.loads(_tool_text(result))
 
 
 async def _call_tool(
@@ -251,7 +257,7 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "find_duplicates",
             [make_duplicate_cluster()],
             None,
-            ["Duplicate clusters", "src/left.py"],
+            ['"Duplicate clusters"', '"src/left.py"'],
             id="find_duplicates_with_results",
         ),
         pytest.param(
@@ -307,7 +313,9 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
             },
         )
 
-    assert "Duplicate clusters" in _tool_text(result)
+    out = _tool_json(result)
+    assert out["query"] == "Duplicate clusters"
+    assert out["clusters"][0]["members"][0]["file_path"] == "src/left.py"
     mock_get.assert_awaited_once_with("/some/path")
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
