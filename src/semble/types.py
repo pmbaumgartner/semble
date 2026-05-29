@@ -1,20 +1,13 @@
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Protocol, TypeAlias
+from typing import Any, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 
 EmbeddingMatrix: TypeAlias = npt.NDArray[np.float32]
-
-
-class SearchMode(str, Enum):
-    """Search mode for SembleIndex.search()."""
-
-    HYBRID = "hybrid"
-    SEMANTIC = "semantic"
-    BM25 = "bm25"
 
 
 class CallType(str, Enum):
@@ -24,17 +17,12 @@ class CallType(str, Enum):
     FIND_RELATED = "find_related"
 
 
-class Encoder(Protocol):
-    """Protocol for embedding models."""
+class ContentType(str, Enum):
+    """Content type for indexing and search pipeline selection."""
 
-    @property
-    def dim(self) -> int:
-        """The dimensionality of the embedding."""
-        ...
-
-    def encode(self, texts: Sequence[str], /, **kwargs: Any) -> EmbeddingMatrix:
-        """Encode texts into embeddings as a 2D float32 array."""
-        ...  # pragma: no cover
+    CODE = "code"
+    DOCS = "docs"
+    CONFIG = "config"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +40,18 @@ class Chunk:
         """File path and line range as a string."""
         return f"{self.file_path}:{self.start_line}-{self.end_line}"
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the dataclass to a dict."""
+        d = asdict(self)
+        d["location"] = self.location
+        return d
+
+    @classmethod
+    def from_dict(cls: type[Chunk], data: dict[str, Any]) -> Chunk:
+        """Create a Chunk from a dict."""
+        data.pop("location", None)
+        return cls(**data)
+
 
 @dataclass(frozen=True, slots=True)
 class SearchResult:
@@ -59,7 +59,13 @@ class SearchResult:
 
     chunk: Chunk
     score: float
-    source: SearchMode
+
+    def to_dict(self) -> dict[str, Any]:
+        """Dump a search result to a dict."""
+        return {
+            "chunk": self.chunk.to_dict(),
+            "score": self.score,
+        }
 
 
 @dataclass(frozen=True, slots=True)

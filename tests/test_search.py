@@ -5,12 +5,13 @@ import bm25s
 import numpy as np
 import numpy.typing as npt
 import pytest
+from model2vec import StaticModel
 from vicinity.backends.basic import BasicArgs
 
 from semble.index.dense import SelectableBasicBackend, embed_chunks, load_model
-from semble.search import _sort_top_k, search_bm25, search_hybrid, search_semantic
+from semble.search import _search_bm25, _search_semantic, _sort_top_k, search
 from semble.tokens import tokenize
-from semble.types import Chunk, Encoder, SearchMode
+from semble.types import Chunk
 from tests.conftest import make_chunk
 
 
@@ -51,24 +52,24 @@ def semantic(embeddings: npt.NDArray[np.float32]) -> SelectableBasicBackend:
 
 def test_search_bm25(bm25: bm25s.BM25, chunks: list[Chunk]) -> None:
     """search_bm25: returns most relevant chunk first; selector restricts to given indices."""
-    results = search_bm25("authenticate token", bm25, chunks, top_k=4, selector=None)
+    results = _search_bm25("authenticate token", bm25, chunks, top_k=4, selector=None)
     assert len(results) > 0
     assert "authenticate" in results[0].chunk.content
 
     selector = np.array([len(chunks) - 1], dtype=np.int_)
-    filtered = search_bm25("format", bm25, chunks, top_k=4, selector=selector)
+    filtered = _search_bm25("format", bm25, chunks, top_k=4, selector=selector)
     assert all(r.chunk is chunks[len(chunks) - 1] for r in filtered)
 
 
 @pytest.mark.parametrize("query", ["", "   ", "\n\n", "zzzznonexistentterm"])
 def test_bm25_returns_empty_for_no_match(bm25: bm25s.BM25, chunks: list[Chunk], query: str) -> None:
     """Empty / whitespace-only / token-less queries return [] instead of crashing bm25s."""
-    assert search_bm25(query, bm25, chunks, top_k=3, selector=None) == []
+    assert _search_bm25(query, bm25, chunks, top_k=3, selector=None) == []
 
 
 def test_semantic_search(semantic: SelectableBasicBackend, chunks: list[Chunk], mock_model: Any) -> None:
     """Semantic search returns results with scores in [-1, 1]."""
-    results = search_semantic("login", mock_model, semantic, chunks, top_k=3, selector=None)
+    results = _search_semantic("login", mock_model, semantic, chunks, top_k=3, selector=None)
     assert len(results) > 0
     assert all(-1.0 <= r.score <= 1.0 for r in results)
 
@@ -77,7 +78,7 @@ def test_search_hybrid(
     chunks: list[Chunk], semantic: SelectableBasicBackend, bm25: bm25s.BM25, mock_model: Any
 ) -> None:
     """search_hybrid: returns combined results; identical content in different files produces separate results."""
-    results = search_hybrid("authenticate token", mock_model, semantic, bm25, chunks, top_k=3)
+    results = search("authenticate token", mock_model, semantic, bm25, chunks, top_k=3)
     assert len(results) > 0
 
     shared_content = "def helper():\n    pass"
@@ -93,23 +94,22 @@ def test_search_hybrid(
     bm25_index = bm25s.BM25()
     bm25_index.index([tokenize(c.content) for c in all_chunks], show_progress=False)
 
-    deduped = search_hybrid("helper", mock_model, sem_index, bm25_index, all_chunks, top_k=5)
+    deduped = search("helper", mock_model, sem_index, bm25_index, all_chunks, top_k=5)
     result_locations = {r.chunk.file_path for r in deduped}
     assert "module_a.py" in result_locations
     assert "module_b.py" in result_locations
 
 
 @pytest.mark.parametrize(
-    ("search_fn", "mode", "query", "top_k"),
+    ("search_fn", "query", "top_k"),
     [
-        (lambda q, m, s, b, c, k: search_bm25(q, b, c, k, selector=None), SearchMode.BM25, "authenticate", 3),
-        (lambda q, m, s, b, c, k: search_semantic(q, m, s, c, k, selector=None), SearchMode.SEMANTIC, "query", 4),
-        (lambda q, m, s, b, c, k: search_hybrid(q, m, s, b, c, k), SearchMode.HYBRID, "login", 4),
+        (lambda q, m, s, b, c, k: _search_bm25(q, b, c, k, selector=None), "authenticate", 3),
+        (lambda q, m, s, b, c, k: _search_semantic(q, m, s, c, k, selector=None), "query", 4),
+        (lambda q, m, s, b, c, k: search(q, m, s, b, c, k), "login", 4),
     ],
 )
 def test_search_source_labels(
     search_fn: Any,
-    mode: SearchMode,
     query: str,
     top_k: int,
     chunks: list[Chunk],
@@ -120,7 +120,6 @@ def test_search_source_labels(
     """Each result carries a source label matching the search mode used."""
     results = search_fn(query, mock_model, semantic, bm25, chunks, top_k)
     assert len(results) > 0
-    assert all(result.source is mode for result in results)
 
 
 def test_sort_top_k() -> None:
@@ -141,10 +140,10 @@ def test_sort_top_k() -> None:
 )
 def test_load_model(model_path: str | None, expected_call_arg: str) -> None:
     """load_model calls from_pretrained with default or custom model path."""
-    fake_model = MagicMock(spec=Encoder)
+    fake_model = MagicMock(spec=StaticModel)
     with patch("semble.index.dense.StaticModel.from_pretrained", return_value=fake_model) as mock_fp:
-        result = load_model(model_path)
-    mock_fp.assert_called_once_with(expected_call_arg)
+        result, _ = load_model(model_path)
+    mock_fp.assert_called_once_with(expected_call_arg, force_download=False)
     assert result is fake_model
 
 

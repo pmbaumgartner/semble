@@ -1,18 +1,15 @@
+import asyncio
+import threading
 from pathlib import Path
 from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from model2vec import StaticModel
 
 from semble.mcp import _CACHE_MAX_SIZE, _IndexCache, create_server, serve
-from semble.types import (
-    Chunk,
-    DuplicateCluster,
-    Encoder,
-    SearchMode,
-    SearchResult,
-)
-from semble.utils import _format_results, _is_git_url, _resolve_chunk
+from semble.types import Chunk, DuplicateCluster, SearchResult
+from semble.utils import format_results, is_git_url, resolve_chunk
 from tests.conftest import make_chunk, make_duplicate_cluster
 
 
@@ -45,7 +42,10 @@ async def _call_tool(
 @pytest.fixture()
 def cache() -> _IndexCache:
     """An _IndexCache backed by a stub model."""
-    return _IndexCache(model=MagicMock(spec=Encoder))
+    c = _IndexCache()
+    c._model_path = "/fake/model"
+    c._model_ready.set()
+    return c
 
 
 def test_resolve_chunk() -> None:
@@ -54,16 +54,16 @@ def test_resolve_chunk() -> None:
     boundary = make_chunk("last line", "src/a.py")  # start=1, end=1 (single-line)
 
     # Line strictly inside a multi-line chunk hits the early-return path.
-    assert _resolve_chunk([interior], "src/a.py", 2) is interior
+    assert resolve_chunk([interior], "src/a.py", 2) is interior
 
     # Line equal to end_line of a single-line chunk hits the fallback path.
-    assert _resolve_chunk([boundary], "src/a.py", 1) is boundary
+    assert resolve_chunk([boundary], "src/a.py", 1) is boundary
 
     # Unknown file returns None.
-    assert _resolve_chunk([interior], "src/other.py", 1) is None
+    assert resolve_chunk([interior], "src/other.py", 1) is None
 
     # Line out of range returns None.
-    assert _resolve_chunk([interior], "src/a.py", 99) is None
+    assert resolve_chunk([interior], "src/a.py", 99) is None
 
 
 @pytest.mark.parametrize(
@@ -83,26 +83,24 @@ def test_resolve_chunk() -> None:
 )
 def test_is_git_url(path: str, expected: bool) -> None:
     """Remote git URLs are detected; local paths are not."""
-    assert _is_git_url(path) is expected
+    assert is_git_url(path) is expected
 
 
 def test_format_results() -> None:
     """_format_results: empty list → header only; with results → numbered fenced blocks with scores."""
-    empty_out = _format_results("My header", [])
-    assert "My header" in empty_out
-    assert "```" not in empty_out
+    empty_out = format_results("query", [])
+    assert empty_out == {"query": "query", "results": []}
 
     chunks = [make_chunk(f"def fn_{i}(): pass", f"f{i}.py") for i in range(3)]
-    results = [
-        SearchResult(chunk=c, score=round(0.1 * (i + 1), 3), source=SearchMode.HYBRID) for i, c in enumerate(chunks)
-    ]
-    out = _format_results("Results for: 'foo'", results)
-    assert "Results for: 'foo'" in out
-    assert out.count("```") >= len(results) * 2  # opening + closing fence each
-    for i, c in enumerate(chunks, start=1):
-        assert f"## {i}." in out
-        assert c.content in out
-    assert "0.100" in out and "0.200" in out and "0.300" in out
+    results = [SearchResult(chunk=c, score=round(0.1 * (i + 1), 3)) for i, c in enumerate(chunks)]
+    out = format_results("foo", results)
+    assert out["query"] == "foo"
+    contents = set(x["chunk"]["content"] for x in out["results"])
+    scores = set(x["score"] for x in out["results"])
+    for chunk in chunks:
+        assert chunk.content in contents
+    for score in [0.1, 0.2, 0.3]:
+        assert score in scores
 
 
 @pytest.mark.anyio
@@ -120,12 +118,16 @@ async def test_index_cache_builds_and_caches(
     """_IndexCache.get() builds via the correct SembleIndex.* entrypoint and caches subsequent calls."""
     resolved_source = str(tmp_path) if source == "local_tmp_path" else source
     fake_index = MagicMock()
-    with patch(f"semble.mcp.SembleIndex.{patch_target}", return_value=fake_index) as mock_build:
+    with (
+        patch(f"semble.mcp.SembleIndex.{patch_target}", return_value=fake_index) as mock_build,
+        patch("semble.mcp.save_index_to_cache") as mock_save,
+    ):
         first = await cache.get(resolved_source)
         second = await cache.get(resolved_source)
     assert first is fake_index
     assert second is fake_index
     mock_build.assert_called_once()
+    mock_save.assert_called_once_with(fake_index, cache._compute_cache_key(resolved_source))
 
 
 @pytest.mark.anyio
@@ -146,6 +148,17 @@ async def test_index_cache_evicts_on_failure(cache: _IndexCache, tmp_path: Path)
         result = await cache.get(str(tmp_path))
     assert result is not None
     assert call_count == 2
+
+
+@pytest.mark.anyio
+async def test_index_cache_ignores_cache_save_failure(cache: _IndexCache, tmp_path: Path) -> None:
+    """A cache save failure must not fail the MCP request."""
+    fake_index = MagicMock()
+    with (
+        patch("semble.mcp.SembleIndex.from_path", return_value=fake_index),
+        patch("semble.mcp.save_index_to_cache", side_effect=RuntimeError("save failed")),
+    ):
+        assert await cache.get(str(tmp_path)) is fake_index
 
 
 @pytest.mark.anyio
@@ -191,9 +204,9 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "search",
             {"query": "bar"},
             "search",
-            [SearchResult(chunk=make_chunk("def bar(): pass", "src/bar.py"), score=0.9, source=SearchMode.HYBRID)],
+            [SearchResult(chunk=make_chunk("def bar(): pass", "src/bar.py"), score=0.9)],
             None,
-            ["bar", "0.900"],
+            ["bar", "0.9"],
             id="search_with_results",
         ),
         pytest.param(
@@ -209,9 +222,9 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "find_related",
             {"file_path": "src/foo.py", "line": 1},
             "find_related",
-            [SearchResult(chunk=make_chunk("class Foo: pass", "src/foo.py"), score=0.8, source=SearchMode.SEMANTIC)],
+            [SearchResult(chunk=make_chunk("class Foo: pass", "src/foo.py"), score=0.8)],
             [make_chunk("class Foo: pass", "src/foo.py")],
-            ["src/foo.py:1", "0.800"],
+            ["src/foo.py:1", "0.8"],
             id="find_related_with_results",
         ),
         pytest.param(
@@ -314,18 +327,91 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("with_path", [True, False], ids=["pre_index", "no_path"])
-async def test_serve_runs_stdio(tmp_path: Path, with_path: bool) -> None:
-    """serve() loads the model, runs stdio, and optionally pre-indexes when a path is given."""
+@pytest.mark.parametrize(
+    ("with_path", "load_err", "from_path_err", "stdio_yields"),
+    [
+        (True, None, None, True),
+        (False, None, None, True),
+        (False, RuntimeError("boom"), None, True),
+        (True, None, RuntimeError("boom"), True),
+        (False, None, None, False),
+    ],
+    ids=["pre_index", "no_path", "model_load_fails", "prewarm_fails", "cancel_pending_init"],
+)
+async def test_serve_runs_stdio(
+    tmp_path: Path,
+    with_path: bool,
+    load_err: Exception | None,
+    from_path_err: Exception | None,
+    stdio_yields: bool,
+) -> None:
+    """serve() runs stdio and handles all background init outcomes without raising."""
+
+    async def fake_stdio() -> None:
+        if stdio_yields:
+            await asyncio.sleep(0.05)  # let the background init task run
+
+    load_kwargs = (
+        {"side_effect": load_err} if load_err else {"return_value": (MagicMock(spec=StaticModel), "/fake/model")}
+    )
+    fp_kwargs = {"side_effect": from_path_err} if from_path_err else {"return_value": MagicMock()}
     with (
-        patch("semble.mcp.load_model", return_value=MagicMock(spec=Encoder)),
-        patch("semble.mcp.SembleIndex.from_path", return_value=MagicMock()),
+        patch("semble.mcp.load_model", **load_kwargs),
+        patch("semble.mcp.SembleIndex.from_path", **fp_kwargs),
         patch.object(_IndexCache, "start_watcher", new_callable=AsyncMock),
-        patch("mcp.server.fastmcp.FastMCP.run_stdio_async", new_callable=AsyncMock) as mock_run,
+        patch("mcp.server.fastmcp.FastMCP.run_stdio_async", side_effect=fake_stdio) as mock_run,
     ):
         await (serve(str(tmp_path)) if with_path else serve())
 
     mock_run.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_serve_opens_stdio_before_model_loads() -> None:
+    """Stdio must open before load_model() finishes."""
+    stdio_opened = threading.Event()
+
+    def blocking_load_model() -> StaticModel:
+        assert stdio_opened.wait(timeout=1.0), "stdio did not open"
+        return MagicMock(spec=StaticModel)
+
+    async def fake_run_stdio() -> None:
+        stdio_opened.set()
+        await asyncio.sleep(0.05)
+
+    with (
+        patch("semble.mcp.load_model", side_effect=blocking_load_model),
+        patch("mcp.server.fastmcp.FastMCP.run_stdio_async", side_effect=fake_run_stdio),
+    ):
+        await serve()
+
+
+@pytest.mark.anyio
+async def test_index_cache_awaits_model(tmp_path: Path) -> None:
+    """get() blocks until the model is installed, then proceeds."""
+    cache = _IndexCache()  # no model yet
+    fake_index = MagicMock()
+    with patch("semble.mcp.SembleIndex.from_path", return_value=fake_index):
+        get_task = asyncio.create_task(cache.get(str(tmp_path)))
+        await asyncio.sleep(0.01)
+        assert not get_task.done(), "get() must block until the model is installed"
+        cache._model_path = "/fake/model"
+        cache._model_ready.set()
+        result = await asyncio.wait_for(get_task, timeout=1.0)
+    assert result is fake_index
+
+
+@pytest.mark.anyio
+async def test_index_cache_propagates_model_error(tmp_path: Path) -> None:
+    """If model load fails, awaiting tool calls re-raise the original exception."""
+    cache = _IndexCache()
+    get_task = asyncio.create_task(cache.get(str(tmp_path)))
+    await asyncio.sleep(0.01)
+    assert not get_task.done()
+    cache._model_error = RuntimeError("HF download failed")
+    cache._model_ready.set()
+    with pytest.raises(RuntimeError, match="HF download failed"):
+        await asyncio.wait_for(get_task, timeout=1.0)
 
 
 @pytest.mark.anyio

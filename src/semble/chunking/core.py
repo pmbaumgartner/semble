@@ -12,6 +12,9 @@ from semble.index.files import ALL_LANGUAGES
 
 logger = getLogger(__name__)
 
+_RECURSION_DEPTH = 500
+_MIN_CHUNK_SIZE = 50
+
 
 def is_supported_language(language: str) -> bool:
     """Check if the language is supported by tree-sitter."""
@@ -80,10 +83,19 @@ def _merge_adjacent_chunks(
     return merged
 
 
-def _merge_node_inner(node: Node, desired_length: int) -> list[ChunkBoundary]:
+def _merge_node_inner(node: Node, desired_length: int, i: int) -> list[ChunkBoundary]:
     """Recursively merge and split nodes."""
     # If there are no child nodes, the only thing we can do is return the current node.
     if not node.children:
+        return [ChunkBoundary(node.start_byte, node.end_byte)]
+
+    length = node.end_byte - node.start_byte
+    # Prevent recursion issues. A depth of > 500 is unlikely
+    if i > _RECURSION_DEPTH:
+        logger.warning("Recursion depth exceeded in chunk.")
+        return [ChunkBoundary(node.start_byte, node.end_byte)]
+    # Prevent recursing into short chunks.
+    if length < _MIN_CHUNK_SIZE:
         return [ChunkBoundary(node.start_byte, node.end_byte)]
 
     groups: list[ChunkBoundary] = []
@@ -101,7 +113,7 @@ def _merge_node_inner(node: Node, desired_length: int) -> list[ChunkBoundary]:
         # If this single chunk is longer than the desired length
         # we try to split it again.
         if length > desired_length:
-            groups.extend(_merge_node_inner(child, desired_length))
+            groups.extend(_merge_node_inner(child, desired_length, i + 1))
             continue
 
         while index < len(children):
@@ -123,7 +135,7 @@ def _merge_node_inner(node: Node, desired_length: int) -> list[ChunkBoundary]:
 
 def _merge_node(node: Node, desired_length: int) -> list[ChunkBoundary]:
     """Recursively turn nodes into chunks, then merge adjacent chunks."""
-    raw_chunks = _merge_node_inner(node, desired_length)
+    raw_chunks = _merge_node_inner(node, desired_length, 0)
     return _merge_adjacent_chunks(raw_chunks, desired_length)
 
 

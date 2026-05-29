@@ -12,10 +12,14 @@ semble search "save_pretrained" ./my-project
 semble search "save model to disk" ./my-project --top-k 10
 ```
 
-Use `--include-text-files` when the answer may live in Markdown, YAML, JSON, or TOML:
+Results are cached automatically on first run and invalidated when files change.
+
+Use `--content docs` to search documentation and prose, `--content config` for config files (yaml, toml, etc.), or `--content all` to search code, docs, and config:
 
 ```bash
-semble search "deployment config" ./my-project --include-text-files
+semble search "deployment guide" ./my-project --content docs
+semble search "database host port" ./my-project --content config
+semble search "authentication" ./my-project --content all
 ```
 
 Use `semble find-related` to discover code similar to a known location (pass `file_path` and `line` from a prior search result):
@@ -39,10 +43,12 @@ semble find-duplicates ./my-project --include-tests
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
-## Workflow
+### Workflow
 
 1. Start with `semble search` to find relevant chunks.
-2. Inspect full files only when the returned chunk is not enough context.
-3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use `semble find-duplicates` when looking for candidate duplicate implementations, copy-pasted logic, or refactoring opportunities; verify clusters before changing code.
-5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
+2. The index is built and cached automatically.
+3. Use `--content docs` for documentation, `--content config` for config files, or `--content all` for everything.
+4. Inspect full files only when the returned chunk does not give enough context.
+5. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
+6. Use `semble find-duplicates` when looking for candidate duplicate implementations, copy-pasted logic, or refactoring opportunities; verify clusters before changing code.
+7. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.

@@ -2,13 +2,13 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from semble.cli import _cli_main
 from semble.stats import build_savings_summary, format_savings_report, save_search_stats
-from semble.types import CallType, SearchMode, SearchResult
+from semble.types import CallType, SearchResult
 from tests.conftest import make_chunk
 
 
@@ -30,16 +30,16 @@ def sample_stats_file(tmp_path: Path) -> Path:
 def test_save_search_stats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """save_search_stats deduplicates file paths and silences write errors."""
     chunk = make_chunk("hello", "src/foo.py")
-    result = SearchResult(chunk=chunk, score=0.9, source=SearchMode.HYBRID)
+    result = SearchResult(chunk=chunk, score=0.9)
     stats_file = tmp_path / "stats.jsonl"
-    monkeypatch.setattr("semble.stats._STATS_FILE", stats_file)
+    monkeypatch.setattr("semble.stats._get_stats_file", lambda: stats_file)
     save_search_stats([result, result], CallType.SEARCH, {"src/foo.py": 42})
     assert json.loads(stats_file.read_text())["file_chars"] == 42
 
     mock_path = MagicMock()
     mock_path.parent.mkdir.return_value = None
     mock_path.open.side_effect = OSError("no write")
-    monkeypatch.setattr("semble.stats._STATS_FILE", mock_path)
+    monkeypatch.setattr("semble.stats._get_stats_file", lambda: mock_path)
     save_search_stats([result], CallType.SEARCH, {"src/foo.py": 42})  # must not raise
 
 
@@ -87,6 +87,11 @@ def test_savings_do_not_subtract_unknown_baselines(tmp_path: Path) -> None:
     assert summary.buckets["All time"].saved_chars == 400
     assert "~100 tokens" in format_savings_report(path=stats_file)
 
+    with patch("semble.stats._get_stats_file", lambda: stats_file):
+        summary = build_savings_summary(path=None)
+        assert summary.buckets["All time"].saved_chars == 400
+        assert "~100 tokens" in format_savings_report(path=stats_file)
+
 
 def test_savings_tolerates_bad_json(tmp_path: Path) -> None:
     """Malformed JSON lines are skipped with a warning."""
@@ -108,7 +113,7 @@ def test_savings_cli_dispatch(
 ) -> None:
     """Savings subcommand dispatches to format_savings_report, with and without --verbose."""
     monkeypatch.setattr(sys, "argv", argv)
-    monkeypatch.setattr("semble.stats._STATS_FILE", tmp_path / "nonexistent.jsonl")
+    monkeypatch.setattr("semble.stats._get_stats_file", lambda: tmp_path / "nonexistent.jsonl")
     _cli_main()
     assert expected in capsys.readouterr().out
 

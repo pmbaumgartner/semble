@@ -1,7 +1,12 @@
 from collections import defaultdict
 from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
 
+from semble.types import ContentType
+
+_MAX_FILE_BYTES = 1_000_000  # 1 MB max file size to read and index
+_EMPTY_FILE_BYTES = 128
 _EXTENSION_TO_LANGUAGE = {
     ".4th": "forth",
     ".ada": "ada",
@@ -357,19 +362,37 @@ _EXTENSION_TO_LANGUAGE = {
 
 _DOC_LANGUAGES = {
     "asciidoc",
-    "beancount",
     "bibtex",
+    "djot",
+    "doxygen",
+    "html",
+    "javadoc",
+    "jsdoc",
+    "latex",
+    "luadoc",
+    "markdown",
+    "markdown_inline",
+    "mermaid",
+    "norg",
+    "norg_meta",
+    "org",
+    "phpdoc",
+    "po",
+    "rst",
+    "rtf",
+    "vimdoc",
+}
+
+_CONFIG_LANGUAGES = {
+    "beancount",
     "capnp",
     "cedarschema",
     "comment",
     "cooklang",
     "cpon",
-    "csv",
     "desktop",
     "devicetree",
     "diff",
-    "djot",
-    "doxygen",
     "dtd",
     "editorconfig",
     "ebnf",
@@ -384,48 +407,36 @@ _DOC_LANGUAGES = {
     "gpg",
     "hjson",
     "hocon",
-    "html",
     "ini",
-    "javadoc",
-    "jsdoc",
-    "json",
-    "json5",
     "kdl",
-    "latex",
     "ledger",
-    "luadoc",
-    "markdown",
-    "markdown_inline",
-    "mermaid",
-    "norg",
-    "norg_meta",
-    "org",
     "pem",
     "pgn",
-    "phpdoc",
-    "po",
     "properties",
     "proto",
-    "psv",
     "requirements",
     "ron",
-    "rst",
-    "rtf",
     "smithy",
     "ssh_config",
     "textproto",
     "thrift",
     "todotxt",
     "toml",
-    "tsv",
     "turtle",
     "typespec",
-    "vimdoc",
     "wit",
     "xcompose",
     "xml",
     "yaml",
     "ziggy_schema",
+}
+
+_DATA_LANGUAGES = {
+    "csv",
+    "json",
+    "json5",
+    "psv",
+    "tsv",
 }
 
 
@@ -438,8 +449,14 @@ def _inv_mapping(mapping: dict[str, str]) -> dict[str, list[str]]:
 
 
 ALL_LANGUAGES = frozenset(_EXTENSION_TO_LANGUAGE.values())
-_WITHOUT_DOC = ALL_LANGUAGES - _DOC_LANGUAGES
+_CODE_LANGUAGES = ALL_LANGUAGES - _DOC_LANGUAGES - _CONFIG_LANGUAGES - _DATA_LANGUAGES
 _LANGUAGE_TO_EXTENSION = _inv_mapping(_EXTENSION_TO_LANGUAGE)
+
+_CONTENT_TYPE_LANGUAGES: dict[ContentType, frozenset[str]] = {
+    ContentType.CODE: frozenset(_CODE_LANGUAGES),
+    ContentType.DOCS: frozenset(_DOC_LANGUAGES),
+    ContentType.CONFIG: frozenset(_CONFIG_LANGUAGES),
+}
 
 
 def detect_language(file_name: Path) -> str | None:
@@ -447,16 +464,43 @@ def detect_language(file_name: Path) -> str | None:
     return _EXTENSION_TO_LANGUAGE.get(file_name.suffix.lower())
 
 
-def get_extensions(include_text_files: bool, extensions: Sequence[str] | None) -> list[str]:
-    """Returns a list of supported file extensions."""
-    if include_text_files:
-        languages = ALL_LANGUAGES
-    else:
-        languages = _WITHOUT_DOC
+def get_extensions(types: Sequence[ContentType]) -> list[str]:
+    """Returns a list of supported file extensions for the given content types."""
+    languages: set[str] = set()
+    for content_type in types:
+        languages.update(_CONTENT_TYPE_LANGUAGES[content_type])
     all_extensions: set[str] = set()
     for language in languages:
         all_extensions.update(_LANGUAGE_TO_EXTENSION.get(language, set()))
-    if extensions is not None:
-        all_extensions.update(extensions)
 
     return sorted(all_extensions)
+
+
+class FileStatus(str, Enum):
+    NEWER = "newer"
+    TOO_LARGE = "too_large"
+    EMPTY = "empty"
+    VALID = "valid"
+
+
+def read_file_text(file_path: Path) -> str:
+    """Read a file's text content, replacing invalid characters and silencing read errors."""
+    return file_path.read_text(encoding="utf-8", errors="replace")
+
+
+def get_file_status(file_path: Path, write_time: float | None) -> FileStatus:
+    """Checks if a file should be indexed based on its size and modification time."""
+    stat = file_path.stat()
+    if write_time is not None and stat.st_mtime > write_time:
+        # Index invalid, file invalid
+        return FileStatus.NEWER
+    size = stat.st_size
+    if size > _MAX_FILE_BYTES:
+        # index valid, file invalid
+        return FileStatus.TOO_LARGE
+    if size < _EMPTY_FILE_BYTES and not read_file_text(file_path).strip():
+        # index valid, file invalid
+        return FileStatus.EMPTY
+
+    # Both valid
+    return FileStatus.VALID

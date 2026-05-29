@@ -18,35 +18,43 @@
 
 [Quickstart](#quickstart) •
 [MCP Server](#mcp-server) •
-[Bash / AGENTS.md](#bash-agentsmd) •
+[AGENTS.md](#agentsmd) •
 [CLI](#cli) •
 [Benchmarks](#benchmarks)
 
 </div>
 
-Semble is a code search library built for agents. It returns the exact code snippets they need instantly, using ~98% fewer tokens than grep+read. Indexing and searching a full codebase end-to-end takes under a second, with ~200x faster indexing and ~10x faster queries than a code-specialized transformer, at 99% of its retrieval quality (see [benchmarks](#benchmarks)). Everything runs on CPU with no API keys, GPU, or external services. Run it as an [MCP server](#mcp-server) or call it from the shell via [AGENTS.md](#bash-agentsmd) and any agent (Claude Code, Cursor, Codex, OpenCode, etc.) gets instant access to any repo.
+Semble is a code search library built for agents. It returns the exact code snippets they need instantly, using ~98% fewer tokens than grep+read. Indexing and searching a full codebase end-to-end takes under a second, with ~200x faster indexing and ~10x faster queries than a code-specialized transformer, at 99% of its retrieval quality (see [benchmarks](#benchmarks)). Everything runs on CPU with no API keys, GPU, or external services. Run it as an [MCP server](#mcp-server) or call it from the shell via [AGENTS.md](#agentsmd) and any agent (Claude Code, Cursor, Codex, OpenCode, etc.) gets instant access to any repo.
 
 ## Quickstart
 
-Your agent queries Semble in natural language (e.g. `"How is authentication handled?"`) and gets back only the relevant code snippets, without grepping or reading full files. Set it up as an MCP server or via AGENTS.md:
+Your agent queries Semble in natural language (e.g. `"How is authentication handled?"`) and gets back only the relevant code snippets, without grepping or reading full files.
 
-### MCP (Claude Code)
+Semble has three complementary setup paths. The recommended setup is using all three (but you can pick and choose based on your needs):
 
-Add Semble to Claude Code (requires [uv](https://docs.astral.sh/uv/getting-started/installation/)):
+- **[MCP server](#mcp-server)**: an MCP server for your agent.
+- **[AGENTS.md](#agentsmd)**: an AGENTS.md snippet with instructions for calling Semble via the CLI.
+- **[Sub-agent](#sub-agent-setup)**: a dedicated `semble-search` sub-agent for harnesses that support it.
+
+### MCP
+
+Expose Semble as a native tool via MCP so your agent can call it directly. Add it to Claude Code (requires [uv](https://docs.astral.sh/uv/getting-started/installation/)):
 
 ```bash
 claude mcp add semble -s user -- uvx --from "semble[mcp]" semble
 ```
 
-Using Codex, OpenCode, or Cursor? See [MCP Server](#mcp-server) for setup instructions.
+See [MCP Server](#mcp-server) below for other harnesses (Cursor, Codex, OpenCode, etc.).
 
-### Bash / AGENTS.md
+<a id="agentsmd"></a>
 
-Install Semble, then add the snippet below to your `AGENTS.md` or `CLAUDE.md`:
+### AGENTS.md
+
+Add Semble usage instructions to your agent's context so it knows when and how to call the CLI. Install the Semble CLI, then add the snippet below to your `AGENTS.md` or `CLAUDE.md`:
 
 ```bash
-pip install semble       # Install with pip
-uv tool install semble   # Or install with uv
+uv tool install semble   # Install with uv (recommended)
+pip install semble       # Or with pip
 ```
 
 <details>
@@ -63,6 +71,16 @@ semble search "save_pretrained" ./my-project
 semble search "save model to disk" ./my-project --top-k 10
 ​```
 
+The index is built on first run (and cached for subsequent runs) and invalidated automatically when files change.
+
+Use `--content docs` to search documentation and prose, `--content config` for config files (yaml, toml, etc.), or `--content all` to search code, docs, and config:
+
+​```bash
+semble search "deployment guide" ./my-project --content docs
+semble search "database host port" ./my-project --content config
+semble search "authentication" ./my-project --content all
+​```
+
 Use `semble find-related` to discover code similar to a known location (pass `file_path` and `line` from a prior search result):
 
 ​```bash
@@ -75,23 +93,32 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 
 ### Workflow
 
-1. Start with `semble search` to find relevant chunks.
-2. Inspect full files only when the returned chunk is not enough context.
-3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
+1. Start with `semble search` to find relevant chunks. The index is built and cached automatically.
+2. Use `--content docs` for documentation, `--content config` for config files, or `--content all` for everything.
+3. Inspect full files only when the returned chunk does not give enough context.
+4. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
+5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
 ```
 
 </details>
 
-Once installed, run `semble savings` to see how many tokens Semble has saved you. Note that for sub-agent support in Claude Code or Codex, you need the full [Bash / AGENTS.md](#bash-agentsmd) setup below.
+### Sub-agent
+
+For harnesses that support sub-agents, install a dedicated `semble-search` sub-agent so search runs in its own context (requires the CLI):
+
+```bash
+semble init   # Claude Code → .claude/agents/semble-search.md
+```
+
+See [Sub-agent setup](#sub-agent-setup) below for other harnesses (Cursor, Codex, OpenCode, etc.).
 
 <details>
 <summary>Updating Semble</summary>
 
 ```bash
-pip install --upgrade semble   # with pip
 uv tool upgrade semble         # with uv
 uv cache clean semble          # for MCP users (restart your MCP client after)
+pip install --upgrade semble   # with pip
 ```
 
 </details>
@@ -102,45 +129,31 @@ uv cache clean semble          # for MCP users (restart your MCP client after)
 - **Accurate**: NDCG@10 of 0.854 on our [benchmarks](#benchmarks), on par with code-specialized transformer models, at a fraction of the size and cost.
 - **Token-efficient**: returns only the relevant chunks, using [~98% fewer tokens than grep+read](#benchmarks).
 - **Zero setup**: runs on CPU with no API keys, GPU, or external services required.
-- **MCP server**: works with Claude Code, Cursor, Codex, OpenCode, and any other MCP-compatible agent.
+- **MCP server**: works with Claude Code, Cursor, Codex, OpenCode, VS Code, and any other MCP-compatible agent.
 - **Local and remote**: pass a local path or a git URL.
 
 ## MCP Server
 
-Semble can run as an MCP server so agents can search any codebase directly. Repos are cloned and indexed on demand, and indexes are cached for the lifetime of the session. Local paths are watched for file changes and re-indexed automatically.
+Semble can run as an MCP server so agents can search any codebase directly. Repos are cloned and indexed on demand. Indexes are persisted to the OS cache folder and reused across sessions; local paths are watched for file changes and re-indexed automatically.
 
 ### Setup
 
 > Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) to be installed.
 
-#### Claude Code
+<details>
+<summary>Claude Code</summary>
+
 ```bash
 claude mcp add semble -s user -- uvx --from "semble[mcp]" semble
 ```
 
-#### Codex
-Add to `~/.codex/config.toml`:
-```toml
-[mcp_servers.semble]
-command = "uvx"
-args = ["--from", "semble[mcp]", "semble"]
-```
+</details>
 
-#### OpenCode
-Add to `~/.opencode/config.json`:
-```json
-{
-  "mcp": {
-    "semble": {
-      "type": "local",
-      "command": ["uvx", "--from", "semble[mcp]", "semble"]
-    }
-  }
-}
-```
+<details>
+<summary>Cursor</summary>
 
-#### Cursor
 Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
+
 ```json
 {
   "mcpServers": {
@@ -152,13 +165,147 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 }
 ```
 
-To include Markdown, YAML, JSON, and TOML in MCP searches, add `--include-text-files` to the server args:
+</details>
+
+<details>
+<summary>Codex</summary>
+
+Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.semble]
 command = "uvx"
-args = ["--from", "semble[mcp]", "semble", "--include-text-files"]
+args = ["--from", "semble[mcp]", "semble"]
 ```
+
+</details>
+
+<details>
+<summary>OpenCode</summary>
+
+Add to `~/.opencode/config.json`:
+
+```json
+{
+  "mcp": {
+    "semble": {
+      "type": "local",
+      "command": ["uvx", "--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>VS Code</summary>
+
+Add to `.vscode/mcp.json` in your project (or your user profile's `mcp.json`):
+
+```json
+{
+  "servers": {
+    "semble": {
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>GitHub Copilot CLI</summary>
+
+Add to `~/.copilot/mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "semble": {
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Windsurf</summary>
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "semble": {
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Gemini CLI</summary>
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "semble": {
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Kiro</summary>
+
+Add to `~/.kiro/settings/mcp.json` (or `.kiro/settings/mcp.json` in your project):
+
+```json
+{
+  "mcpServers": {
+    "semble": {
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Zed</summary>
+
+Add to `~/.config/zed/settings.json` (or `.zed/settings.json` in your project):
+
+```json
+{
+  "context_servers": {
+    "semble": {
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    }
+  }
+}
+```
+
+</details>
+
 
 ### Tools
 
@@ -170,88 +317,40 @@ args = ["--from", "semble[mcp]", "semble", "--include-text-files"]
 
 `find_duplicates` also accepts duplicate-specific filters: `language`, `include_paths`, `exclude_paths`, `include_tests`, `include_data`, `include_scaffolding`, `min_lines`, `min_structural_score`, and `min_cluster_size`.
 
+By default the MCP server indexes only code files. To also index documentation, config, or everything, append `--content docs`, `--content config`, or `--content all` to the server command, or a combination, e.g. `--content code docs`. For example, in Claude Code: `claude mcp add semble -s user -- uvx --from "semble[mcp]" semble --content all`.
 
-<a id="bash-agentsmd"></a>
 
-## Bash / AGENTS.md
+## Sub-agent setup
 
-An alternative to MCP is to invoke Semble via Bash. For Claude Code and Codex CLI, this is the only option for sub-agents, which cannot call MCP tools directly, though it can also be used alongside MCP for the top-level agent.
-
-To add Bash support, append the following to your `AGENTS.md` or `CLAUDE.md`:
-
-```markdown
-## Code Search
-
-Use `semble search` to find code by describing what it does or naming a symbol/identifier, instead of grep:
-
-​```bash
-semble search "authentication flow" ./my-project
-semble search "save_pretrained" ./my-project
-semble search "save model to disk" ./my-project --top-k 10
-​```
-
-Use `--include-text-files` when the answer may live in Markdown, YAML, JSON, or TOML:
-
-​```bash
-semble search "deployment config" ./my-project --include-text-files
-​```
-
-Use `semble find-related` to discover code similar to a known location (pass `file_path` and `line` from a prior search result):
-
-​```bash
-semble find-related src/auth.py 42 ./my-project
-​```
-
-Use `semble find-duplicates` to identify candidate duplicate implementations, copy-pasted logic, and refactoring opportunities:
-
-​```bash
-semble find-duplicates ./my-project
-semble find-duplicates ./my-project --language python
-semble find-duplicates ./my-project --include src --exclude tests --exclude src/generated
-semble find-duplicates ./my-project --include src/app --include packages/core
-semble find-duplicates ./my-project --min-cluster-size 3
-semble find-duplicates ./my-project --include-tests
-​```
-
-`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips test-looking paths plus low-signal static data/config and import/header scaffolding by default. Treat results as leads to inspect, not confirmed problems; tree-sitter limits and language differences can produce false positives. Use `--include`, `--exclude`, `--include-tests`, `--include-data`, and `--include-scaffolding` to adjust only the duplicate scan; these filters do not change the indexed file set or normal search behavior.
-
-If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
-
-## Workflow
-
-1. Start with `semble search` to find relevant chunks.
-2. Inspect full files only when the returned chunk is not enough context.
-3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-4. Use `semble find-duplicates` when looking for candidate duplicate implementations, copy-pasted logic, or refactoring opportunities; verify clusters before changing code.
-5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
-```
-
-**Claude Code sub-agent**: Claude Code also supports a dedicated sub-agent. Run this once in your project root:
+Claude Code, Gemini CLI, Cursor, OpenCode, GitHub Copilot CLI, and Kiro all support a dedicated semble search sub-agent. Run `semble init` once in your project root:
 
 ```bash
-semble init
-# or, if semble is not on $PATH:
-uvx --from "semble[mcp]" semble init
+semble init                      # Claude Code  → .claude/agents/semble-search.md
+semble init --agent gemini       # Gemini CLI   → .gemini/agents/semble-search.md
+semble init --agent cursor       # Cursor       → .cursor/agents/semble-search.md
+semble init --agent opencode     # OpenCode     → .opencode/agents/semble-search.md
+semble init --agent copilot      # Copilot CLI  → .github/agents/semble-search.md
+semble init --agent kiro         # Kiro         → .kiro/agents/semble-search.md
 ```
 
-This writes [`.claude/agents/semble-search.md`](src/semble/agents/semble-search.md).
+If semble is not on `$PATH`, prefix the command with `uvx --from "semble[mcp]"`.
 
 ## CLI
 
 Semble also ships as a standalone CLI. This is useful in scripts or anywhere you want search results without an MCP session.
 
 ```bash
-# Search a local repo
+# Search a local repo (index is built and cached automatically)
 semble search "authentication flow" ./my-project
-
-# Search for a symbol or identifier
-semble search "save_pretrained" ./my-project
 
 # Search a remote repo (cloned on demand)
 semble search "save model to disk" https://github.com/MinishLab/model2vec
 
 # Limit results
 semble search "save model to disk" ./my-project --top-k 10
+
+# Search docs/config/everything instead of just code
+semble search "deployment guide" ./my-project --content docs   # or: config, all
 
 # Find code similar to a known location
 semble find-related src/auth.py 42 ./my-project
@@ -287,7 +386,32 @@ semble find-duplicates ./my-project --include-scaffolding
 semble find-duplicates ./my-project --exclude tests --exclude src/generated
 ```
 
-`path` defaults to the current directory when omitted; git URLs are accepted. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and skips test-looking chunks unless `include_tests=True`. The CLI `find-duplicates` command applies `--include`, `--exclude`, `--include-tests`, `--include-data`, and `--include-scaffolding` as duplicate-scan filters without changing the indexed file set.
+`--content` accepts `code` (default), `docs`, `config`, or `all`. `path` defaults to the current directory when omitted; git URLs are accepted. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place. Duplicate discovery returns clusters with at least two chunks by default, requires structural similarity of at least `0.40` per pair edge, and skips test-looking chunks unless `--include-tests` is passed. The CLI `find-duplicates` command applies `--include`, `--exclude`, `--include-tests`, `--include-data`, and `--include-scaffolding` as duplicate-scan filters without changing the indexed file set.
+
+<details>
+<summary>Controlling which files are indexed</summary>
+
+Semble reads `.gitignore` and `.sembleignore` files to determine which files to index. Both files use standard gitignore syntax and their patterns are merged. `.sembleignore` lets you add semble-specific rules without touching `.gitignore`. Rules are applied recursively, so a `.sembleignore` in a subdirectory applies to that subtree.
+
+**Excluding files:** add patterns the same way you would in `.gitignore`:
+
+```
+# .sembleignore
+generated/     # exclude generated dir
+*.pb.go.       # exclude Go protobuf files
+```
+
+**Including non-default extensions:** prefix the extension pattern with `!` to force-include files that semble wouldn't index by default:
+
+```
+# .sembleignore
+!*.proto       # include Protobuf files
+!*.cob         # include COBOL files
+```
+
+Semble also always skips a set of well-known non-source directories regardless of ignore files (e.g. `node_modules/`, `.venv/`, `dist/`, `build/`, `__pycache__/`, and similar).
+
+</details>
 
 <details>
 <summary>Savings</summary>
@@ -311,7 +435,7 @@ semble savings --verbose # also show breakdown by call type
 
 Savings are calculated as follows: for each call, semble records the total character count of the unique files containing returned chunks and the character count of the snippets returned. Estimated tokens saved is `(file chars − snippet chars) / 4` (4 chars per token). This is a conservative estimate: the baseline is reading matched files in full, which is how coding agents often explore unfamiliar code.
 
-Stats are stored in `~/.semble/savings.jsonl`.
+Stats are stored in the OS cache folder (`~/Library/Caches/semble/` on macOS, `~/.cache/semble/` on Linux, `%LOCALAPPDATA%\semble\Cache\` on Windows).
 
 </details>
 
@@ -321,10 +445,19 @@ Stats are stored in `~/.semble/savings.jsonl`.
 Semble can also be used as a Python library for programmatic access, useful when building custom tooling or integrating search directly into your own code.
 
 ```python
-from semble import SembleIndex
+from semble import ContentType, SembleIndex
 
-# Index a local directory
+# Index a local directory (code only, the default)
 index = SembleIndex.from_path("./my-project")
+
+# Index docs and prose (markdown, rst, etc.)
+index = SembleIndex.from_path("./my-project", content=ContentType.DOCS)
+
+# Index everything (code, docs, and config)
+index = SembleIndex.from_path("./my-project", content=[ContentType.CODE, ContentType.DOCS, ContentType.CONFIG])
+
+# Index code and docs together
+index = SembleIndex.from_path("./my-project", content=[ContentType.CODE, ContentType.DOCS])
 
 # Index a remote git repository
 index = SembleIndex.from_git("https://github.com/MinishLab/model2vec")
@@ -379,6 +512,12 @@ After fusing, results are reranked with a set of code-aware signals:
 </details>
 
 Because the embedding model is static with no transformer forward pass at query time, all of this runs in milliseconds on CPU.
+
+Indexes are cached to disk automatically on the first search. On subsequent runs, Semble walks the file tree and compares modification times; if any file was added, removed, or changed, the index is fully rebuilt. In MCP mode, a file watcher detects changes and triggers a rebuild automatically so the index is always current within the same session.
+
+## Acknowledgements
+
+Thanks to [Greptile](https://greptile.com) for providing free access to their AI code review platform.
 
 ## License
 

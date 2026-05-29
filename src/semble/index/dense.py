@@ -1,4 +1,7 @@
-from typing import cast
+from __future__ import annotations
+
+from functools import cache
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
@@ -8,25 +11,32 @@ from vicinity.backends.basic import CosineBasicBackend
 from vicinity.datatypes import QueryResult
 from vicinity.utils import normalize
 
-from semble.types import Chunk, Encoder
+from semble.types import Chunk
+from semble.utils import resolve_model_name
 
-_DEFAULT_MODEL_NAME = "minishlab/potion-code-16M"
 
-
-def load_model(model_path: str | None = None) -> Encoder:
-    """Return the current model, loading the default if none was provided."""
-    if model_path is None:
-        model_path = _DEFAULT_MODEL_NAME
+@cache
+def _load_cached(model_path: str) -> StaticModel:
+    """Load a model and cache it, but only after the path resolves."""
     # Disable HF progress bars since the model is loaded silently in the background during indexing.
     disable_progress_bars()
     try:
-        model = StaticModel.from_pretrained(model_path)
+        model = StaticModel.from_pretrained(model_path, force_download=False)
     finally:
         disable_progress_bars()
-    return cast(Encoder, model)
+
+    return model
 
 
-def embed_chunks(model: Encoder, chunks: list[Chunk]) -> npt.NDArray[np.float32]:
+def load_model(model_path: str | None = None) -> tuple[StaticModel, str]:
+    """Return the current model, loading the default if none was provided."""
+    if model_path is None:
+        model_path = resolve_model_name()
+    model = _load_cached(model_path)
+    return model, model_path
+
+
+def embed_chunks(model: StaticModel, chunks: list[Chunk]) -> npt.NDArray[np.float32]:
     """Embed chunks using the configured model."""
     if not chunks:
         return np.empty((0, model.dim), dtype=np.float32)
@@ -79,3 +89,14 @@ class SelectableBasicBackend(CosineBasicBackend):
             out.extend(zip(sorted_indices, sorted_distances))
 
         return out
+
+    def save(self, path: Path) -> None:
+        """Save the selectable basic backend."""
+        path.mkdir(parents=True, exist_ok=True)
+        super().save(path)
+
+    @classmethod
+    def load(cls, path: Path) -> "SelectableBasicBackend":
+        """Load a selectable basic backend."""
+        loaded = super().load(path)
+        return SelectableBasicBackend(loaded.vectors, loaded.arguments)

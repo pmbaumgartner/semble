@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "semble"
 description = "Fast and Accurate Code Search for Agents"
-authors = [{name = "Thomas van Dongen", email = "thomas123@live.nl"}, { name = "Stéphan Tulkens", email = "stephantul@gmail.com"}]
+authors = [{name = "Thomas van Dongen", email = "thomasvdongen@proton.me"}, { name = "Stéphan Tulkens", email = "stephantul@gmail.com"}]
 readme = { file = "README.md", content-type = "text/markdown" }
 dynamic = ["version"]
 license = { file = "LICENSE" }
@@ -31,8 +31,9 @@ dependencies = [
     "numpy>=1.24.0",
     "bm25s>=0.2.0",
     "pathspec>=0.12",
-    "tree-sitter>=0.25",
-    "tree-sitter-language-pack>=1.0,<1.8.0,!=1.6.3"
+    "tree-sitter>=0.25,<0.26",
+    "tree-sitter-language-pack>=1.0,<1.8.0,!=1.6.3",
+    "orjson"
 ]
 
 [project.optional-dependencies]

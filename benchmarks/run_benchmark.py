@@ -5,7 +5,6 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
-from model2vec import StaticModel
 
 from benchmarks.data import (
     RepoSpec,
@@ -17,8 +16,8 @@ from benchmarks.data import (
 )
 from benchmarks.metrics import ndcg_at_k, target_rank
 from semble import SembleIndex
-from semble.index.dense import _DEFAULT_MODEL_NAME
-from semble.types import SearchMode, SearchResult
+from semble.types import SearchResult
+from semble.utils import DEFAULT_MODEL_NAME
 
 _LATENCY_RUNS = 5
 _DIRECT_TOP_K = 10
@@ -48,8 +47,8 @@ def evaluate(
     tasks: list[Task],
     *,
     verbose: bool = False,
-    mode: SearchMode = SearchMode.HYBRID,
     alpha: float | None = None,
+    rerank: bool = True,
 ) -> tuple[float, float, list[float], dict[str, float], int]:
     """Return mean NDCG@5, NDCG@10, median query latency (ms), and per-category NDCG@10."""
     ndcg5_sum = 0.0
@@ -63,7 +62,7 @@ def evaluate(
         results: list[SearchResult] = []
         for _ in range(_LATENCY_RUNS):
             started = time.perf_counter()
-            results = index.search(task.query, top_k=_DIRECT_TOP_K, mode=mode, alpha=alpha)
+            results = index.search(task.query, top_k=_DIRECT_TOP_K, alpha=alpha, rerank=rerank)
             query_latencies.append((time.perf_counter() - started) * 1000)
         latencies.append(float(np.median(query_latencies)))
         tokens += sum(len(r.chunk.content) // 4 for r in results)
@@ -188,7 +187,7 @@ def _print_summary(results: list[RepoResult]) -> None:
 
 
 def _bench_quality(
-    repo_tasks: dict[str, list[Task]], model: StaticModel, specs: dict[str, RepoSpec], *, verbose: bool = False
+    repo_tasks: dict[str, list[Task]], specs: dict[str, RepoSpec], *, verbose: bool = False
 ) -> list[RepoResult]:
     """Run quality benchmarks (NDCG@5, NDCG@10, latency) for each repo."""
     print(
@@ -204,13 +203,13 @@ def _bench_quality(
     for repo, tasks in sorted(repo_tasks.items()):
         spec = specs[repo]
         started = time.perf_counter()
-        index = SembleIndex.from_path(spec.benchmark_dir, model=model)
+        index = SembleIndex.from_path(spec.benchmark_dir)
         index_ms = (time.perf_counter() - started) * 1000
         ndcg5, ndcg10, latencies, by_category, tokens = evaluate(index, tasks, verbose=verbose)
         p50, p90, p95, p99 = np.percentile(latencies, [50, 90, 95, 99]).tolist()
         result = RepoResult(
             repo=repo,
-            mode=SearchMode.HYBRID.value,
+            mode="auto",
             language=spec.language,
             chunks=len(index.chunks),
             tokens=tokens,
@@ -260,7 +259,7 @@ def _save_results(results: list[RepoResult]) -> None:
     n_repos = len(results)
     output = {
         "tool": "semble-hybrid",
-        "model": _DEFAULT_MODEL_NAME,
+        "model": DEFAULT_MODEL_NAME,
         "summary": {
             "ndcg10": round(sum(r.ndcg10 for r in results) / n_repos, 4),
             "tokens": round(sum(r.tokens for r in results) / n_repos, 0),
@@ -299,11 +298,10 @@ def main() -> None:
     repo_specs, tasks = load_filtered_tasks(args.repo or None, args.language or None)
     print("Loading model...", file=sys.stderr)
     started = time.perf_counter()
-    model = StaticModel.from_pretrained(_DEFAULT_MODEL_NAME)
     print(f"Loaded in {(time.perf_counter() - started) * 1000:.0f} ms", file=sys.stderr)
     print(file=sys.stderr)
     repo_tasks = grouped_tasks(tasks)
-    results = _bench_quality(repo_tasks, model, repo_specs, verbose=args.verbose)
+    results = _bench_quality(repo_tasks, repo_specs, verbose=args.verbose)
     _print_summary(results)
     if not args.repo and not args.language:
         _save_results(results)

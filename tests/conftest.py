@@ -118,7 +118,7 @@ def make_duplicate_index(chunks: Sequence[Chunk]) -> SembleIndex:
         semantic_index = SelectableBasicBackend(embeddings, BasicArgs())
     else:
         semantic_index = MagicMock()
-    return SembleIndex(_ConstantModel(), MagicMock(), semantic_index, chunk_list)
+    return SembleIndex(_ConstantModel(), MagicMock(), semantic_index, chunk_list, "")
 
 
 @pytest.fixture

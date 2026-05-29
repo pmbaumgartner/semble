@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+from typing import Any
 
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, SearchResult
 
@@ -12,14 +14,15 @@ _DUPLICATE_SIGNAL_LEGEND = (
     "ast_type/ast_shape=AST overlap when available.",
 )
 _MAX_DUPLICATE_PAIRS_SHOWN = 5
+DEFAULT_MODEL_NAME = "minishlab/potion-code-16M"
 
 
-def _is_git_url(path: str) -> bool:
+def is_git_url(path: str) -> bool:
     """Return True if path looks like a remote git URL rather than a local path."""
     return path.startswith(_GIT_URL_SCHEMES) or _SCP_GIT_URL_RE.match(path) is not None
 
 
-def _resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | None:
+def resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | None:
     """Return the chunk containing *line* in *file_path*, or None.
 
     Reconstructs a Chunk from its JSON-primitive MCP tool arguments (file_path + line)
@@ -35,16 +38,14 @@ def _resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | No
     return fallback
 
 
-def _format_results(header: str, results: list[SearchResult]) -> str:
-    """Render SearchResult objects as numbered, fenced code blocks."""
-    lines: list[str] = [header, ""]
-    for i, r in enumerate(results, 1):
-        lines.append(f"## {i}. {r.chunk.location}  [score={r.score:.3f}]")
-        lines.append("```")
-        lines.append(r.chunk.content.strip())
-        lines.append("```")
-        lines.append("")
-    return "\n".join(lines)
+def format_results(query: str, results: list[SearchResult]) -> dict[str, Any]:
+    """Render SearchResult objects as a JSONable object."""
+    return {"query": query, "results": [r.to_dict() for r in results]}
+
+
+def resolve_model_name() -> str:
+    """Resolve a model name to a configurable."""
+    return os.environ.get("SEMBLE_MODEL_NAME", DEFAULT_MODEL_NAME)
 
 
 def _format_duplicate_clusters(

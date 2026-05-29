@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from semble.cli import _CLAUDE_FILE_PATH, _cli_main, _run_init, main
+from semble.cli import Agent, _agent_path, _cli_main, _maybe_save_index, _run_init, main
 from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
-from semble.types import SearchMode, SearchResult
+from semble.types import ContentType, SearchResult
 from tests.conftest import make_chunk, make_duplicate_cluster
 
-_CLAUDE_AGENT_FILE = files("semble").joinpath("agents/semble-search.md").read_text(encoding="utf-8")
+_CLAUDE_FILE_PATH = _agent_path(Agent.CLAUDE)
 
 
 @pytest.mark.parametrize(
@@ -33,7 +33,7 @@ def test_main_calls_asyncio_run(argv: list[str], monkeypatch: pytest.MonkeyPatch
     "argv, expected_in_output",
     [
         (["semble", "search", "query text", "/some/path"], ["query text", "0.9"]),
-        (["semble", "search", "nothing", "/some/path", "--top-k", "3", "--mode", "bm25"], ["No results found"]),
+        (["semble", "search", "nothing", "/some/path", "--top-k", "3"], ["No results found"]),
     ],
 )
 def test_cli_search(
@@ -46,9 +46,7 @@ def test_cli_search(
     chunk = make_chunk("def foo(): pass", "src/foo.py")
     fake_index = MagicMock()
     has_results = "No results" not in expected_in_output[0]
-    fake_index.search.return_value = (
-        [SearchResult(chunk=chunk, score=0.9, source=SearchMode.HYBRID)] if has_results else []
-    )
+    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9)] if has_results else []
     monkeypatch.setattr(sys, "argv", argv)
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
         _cli_main()
@@ -60,7 +58,7 @@ def test_cli_search(
 @pytest.mark.parametrize(
     ("scenario", "expected_stdout", "expected_stderr", "expected_exit_code"),
     [
-        ("with_results", ["src/bar.py", "0.800"], None, None),
+        ("with_results", ["src/bar.py", "0.8"], None, None),
         ("no_results", ["No related chunks found"], None, None),
         ("unknown_chunk", [], "No chunk found", 1),
     ],
@@ -77,9 +75,7 @@ def test_cli_find_related(
     chunk = make_chunk("class Bar: pass", "src/bar.py")
     fake_index = MagicMock()
     fake_index.chunks = [] if scenario == "unknown_chunk" else [chunk]
-    fake_index.find_related.return_value = (
-        [SearchResult(chunk=chunk, score=0.8, source=SearchMode.SEMANTIC)] if scenario == "with_results" else []
-    )
+    fake_index.find_related.return_value = [SearchResult(chunk=chunk, score=0.8)] if scenario == "with_results" else []
     file_path = "unknown.py" if scenario == "unknown_chunk" else "src/bar.py"
     monkeypatch.setattr(sys, "argv", ["semble", "find-related", file_path, "1", "/some/path"])
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
@@ -142,7 +138,7 @@ def test_cli_find_duplicates_maps_options(
 
     mock_from_path.assert_called_once_with(
         "/some/path",
-        include_text_files=False,
+        content=[ContentType.CODE],
     )
     fake_index.find_duplicates.assert_called_once_with(
         top_k=7,
@@ -177,7 +173,7 @@ def test_cli_find_duplicates_empty_state(
 
     mock_from_path.assert_called_once_with(
         "/some/path",
-        include_text_files=False,
+        content=[ContentType.CODE],
     )
     fake_index.find_duplicates.assert_called_once_with(
         top_k=5,
@@ -209,19 +205,23 @@ def test_cli_find_duplicates_uses_git_url(
 
     mock_from_git.assert_called_once_with(
         "https://github.com/org/repo",
-        include_text_files=False,
+        content=[ContentType.CODE],
     )
     assert "No duplicate clusters found." in capsys.readouterr().out
 
 
-def test_init_creates_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """_run_init writes the agent file and prints its path."""
+@pytest.mark.parametrize("agent", list(Agent))
+def test_init_creates_file(
+    agent: Agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """_run_init writes the correct agent file for every supported agent."""
     monkeypatch.chdir(tmp_path)
-    _run_init()
-    dest = tmp_path / _CLAUDE_FILE_PATH
+    _run_init(agent=agent)
+    dest = tmp_path / _agent_path(agent)
+    expected = files("semble").joinpath(f"agents/{agent.value}.md").read_text(encoding="utf-8")
     assert dest.exists()
-    assert dest.read_text(encoding="utf-8") == _CLAUDE_AGENT_FILE
-    assert str(_CLAUDE_FILE_PATH) in capsys.readouterr().out
+    assert dest.read_text(encoding="utf-8") == expected
+    assert str(_agent_path(agent)) in capsys.readouterr().out
 
 
 def test_init_refuses_overwrite_without_force(
@@ -243,7 +243,7 @@ def test_init_overwrites_with_force(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text("old content", encoding="utf-8")
     _run_init(force=True)
-    assert dest.read_text(encoding="utf-8") == _CLAUDE_AGENT_FILE
+    assert dest.read_text(encoding="utf-8") == files("semble").joinpath("agents/claude.md").read_text(encoding="utf-8")
 
 
 def test_init_via_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -262,7 +262,7 @@ def test_main_dispatches_to_cli(
     """main() routes to _cli_main when first argument is a CLI subcommand."""
     chunk = make_chunk("def foo(): pass", "src/foo.py")
     fake_index = MagicMock()
-    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9, source=SearchMode.HYBRID)]
+    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9)]
     monkeypatch.setattr(sys, "argv", ["semble", "search", "query text", "/some/path"])
     with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
         main()
@@ -300,7 +300,7 @@ def test_cli_entrypoint_works_without_mcp_installed(
     """CLI entrypoint paths succeed even when the mcp package is not installed."""
     chunk = make_chunk("def foo(): pass", "src/foo.py")
     fake_index = MagicMock()
-    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9, source=SearchMode.HYBRID)]
+    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9)]
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setitem(sys.modules, "mcp", None)
     monkeypatch.setitem(sys.modules, "mcp.server", None)
@@ -328,9 +328,83 @@ def test_mcp_main_exits_with_message_when_extras_missing(
     assert "pip install 'semble[mcp]'" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("command", "argv"),
+    [
+        ("search", ["semble", "search", "query", "/no/such/path"]),
+        ("find-related", ["semble", "find-related", "src/foo.py", "1", "/no/such/path"]),
+    ],
+)
+def test_cli_path_not_found(
+    command: str, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """index, search, and find-related exit 1 with a friendly message when the path does not exist."""
+    monkeypatch.setattr(sys, "argv", argv)
+    with patch("semble.cli._build_index", side_effect=FileNotFoundError("Path does not exist: /no/such/path")):
+        with pytest.raises(SystemExit) as exc_info:
+            _cli_main()
+    assert exc_info.value.code == 1
+    assert "Path does not exist" in capsys.readouterr().err
+
+
+def test_include_text_files_cli_deprecated(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--include-text-files on CLI raises DeprecationWarning."""
+    import warnings
+
+    chunk = make_chunk("def foo(): pass", "src/foo.py")
+    fake_index = MagicMock()
+    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9)]
+    monkeypatch.setattr(sys, "argv", ["semble", "search", "query", "/some/path", "--include-text-files"])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _cli_main()
+    assert any(
+        "include-text-files" in str(w.message).lower() for w in caught if issubclass(w.category, DeprecationWarning)
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv_content", "expected"),
+    [
+        (["--content", "code"], [ContentType.CODE]),
+        (["--content", "code", "docs"], [ContentType.CODE, ContentType.DOCS]),
+        (["--content", "all"], [ContentType.CODE, ContentType.DOCS, ContentType.CONFIG]),
+        (["--content", "code", "all"], [ContentType.CODE, ContentType.DOCS, ContentType.CONFIG]),
+        ([], [ContentType.CODE]),
+    ],
+)
+def test_cli_content_argument(
+    argv_content: list[str],
+    expected: list[ContentType],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--content parses into the right ContentType list (including the 'all' shorthand and default)."""
+    chunk = make_chunk("def foo(): pass", "src/foo.py")
+    fake_index = MagicMock()
+    fake_index.search.return_value = [SearchResult(chunk=chunk, score=0.9)]
+    monkeypatch.setattr(sys, "argv", ["semble", "search", "query", "/some/path", *argv_content])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index) as mock_from_path:
+        _cli_main()
+    assert list(mock_from_path.call_args.kwargs["content"]) == expected
+
+
+def test_maybe_save_index_logs_error_on_save_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    """_maybe_save_index prints to stderr when index.save raises."""
+    fake_index = MagicMock()
+    fake_index.loaded_from_disk = False
+    fake_index.save.side_effect = OSError("disk full")
+    with patch("semble.cli.find_index_from_cache_folder", return_value=Path("/cache")):
+        _maybe_save_index(fake_index, "/some/path")
+    assert "Error saving index" in capsys.readouterr().err
+
+
 def test_agent_file_tools_are_bash_only() -> None:
     """The agent file must list only Bash and Read — no MCP tools that require schema loading."""
-    frontmatter = _CLAUDE_AGENT_FILE.split("---")[1]
+    frontmatter = files("semble").joinpath("agents/claude.md").read_text(encoding="utf-8").split("---")[1]
     tools_line = next(line for line in frontmatter.splitlines() if line.startswith("tools:"))
     tools = [t.strip() for t in tools_line.removeprefix("tools:").split(",")]
     assert set(tools) == {"Bash", "Read"}, f"Unexpected tools in agent file: {tools}"

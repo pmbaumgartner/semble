@@ -5,7 +5,6 @@ import time
 from dataclasses import asdict
 
 import numpy as np
-from model2vec import StaticModel
 
 from benchmarks.data import (
     RepoSpec,
@@ -18,28 +17,26 @@ from benchmarks.data import (
 )
 from benchmarks.run_benchmark import RepoResult, evaluate
 from semble import SembleIndex
-from semble.index.dense import _DEFAULT_MODEL_NAME
-from semble.types import SearchMode
+from semble.utils import DEFAULT_MODEL_NAME
 
-_MODES = ["bm25", "semantic", "semble-bm25", "semble-semantic"]
-
-# Maps mode name -> (search_mode, alpha) for index.search()
-# alpha=None  → raw mode, no ranking pipeline
+# alpha=None  → raw mode, input depends on query
 # alpha=0.0   → hybrid pipeline, BM25-only input
 # alpha=1.0   → hybrid pipeline, semantic-only input
-_MODE_PARAMS: dict[str, tuple[SearchMode, float | None]] = {
-    "bm25": (SearchMode.BM25, None),
-    "semantic": (SearchMode.SEMANTIC, None),
-    "semble-bm25": (SearchMode.HYBRID, 0.0),
-    "semble-semantic": (SearchMode.HYBRID, 1.0),
+_MODE_PARAMS: dict[str, tuple[float | None, bool]] = {
+    "semble-bm25": (0.0, True),
+    "semble-semantic": (1.0, True),
+    "semble-auto": (None, True),
+    "semble-balanced": (0.5, True),
+    "unranked-bm25": (0.0, False),
+    "unranked-semantic": (1.0, False),
+    "unranked-auto": (None, False),
+    "unranked-balanced": (0.5, False),
 }
 
 
 def _bench(
     repo_tasks: dict[str, list[Task]],
     specs: dict[str, RepoSpec],
-    model: StaticModel,
-    modes: list[str],
     *,
     verbose: bool = False,
 ) -> list[RepoResult]:
@@ -62,13 +59,12 @@ def _bench(
             print(f"\n--- {repo} ---", file=sys.stderr)
 
         started = time.perf_counter()
-        index = SembleIndex.from_path(spec.benchmark_dir, model=model)
+        index = SembleIndex.from_path(spec.benchmark_dir)
         index_ms = (time.perf_counter() - started) * 1000
 
-        for mode in modes:
-            search_mode, alpha = _MODE_PARAMS[mode]
+        for mode, (alpha, rerank) in sorted(_MODE_PARAMS.items()):
             ndcg5, ndcg10, latencies, by_category, tokens = evaluate(
-                index, tasks, mode=search_mode, alpha=alpha, verbose=verbose
+                index, tasks, alpha=alpha, verbose=verbose, rerank=rerank
             )
             p50, p90, p95, p99 = np.percentile(latencies, [50, 90, 95, 99]).tolist()
             result = RepoResult(
@@ -99,30 +95,26 @@ def _bench(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="semble ablation benchmarks.")
     add_filter_args(parser, verbose=True)
-    parser.add_argument(
-        "--mode", action="append", default=[], choices=_MODES, help="Mode(s) to evaluate (default: all)."
-    )
     return parser.parse_args()
 
 
 def main() -> None:
     """Run the semble ablation benchmarks."""
     args = _parse_args()
-    modes = args.mode or _MODES
 
     repo_specs, tasks = load_filtered_tasks(args.repo or None, args.language or None)
 
     print("Loading model...", file=sys.stderr)
     started = time.perf_counter()
-    model = StaticModel.from_pretrained(_DEFAULT_MODEL_NAME)
     print(f"Loaded in {(time.perf_counter() - started) * 1000:.0f}ms", file=sys.stderr)
     print(file=sys.stderr)
 
-    results = _bench(grouped_tasks(tasks), repo_specs, model, modes, verbose=args.verbose)
+    results = _bench(grouped_tasks(tasks), repo_specs, verbose=args.verbose)
 
     if not results:
         return
 
+    modes = sorted(_MODE_PARAMS)
     print(file=sys.stderr)
     for mode in modes:
         mode_results = [r for r in results if r.mode == mode]
@@ -137,7 +129,7 @@ def main() -> None:
 
     summary = {
         "tool": "semble-ablations",
-        "model": _DEFAULT_MODEL_NAME,
+        "model": DEFAULT_MODEL_NAME,
         "by_mode": summarize_modes(results, modes),
         "repos": [asdict(r) for r in results],
     }
