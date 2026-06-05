@@ -13,10 +13,11 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from semble.cache import save_index_to_cache
+from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.index.dense import load_model
-from semble.types import ContentType
-from semble.utils import format_results, is_git_url, resolve_chunk
+from semble.types import ContentType, DuplicateCluster
+from semble.utils import format_duplicate_clusters, format_results, is_git_url, resolve_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,13 @@ _REPO_DESCRIPTION = (
 )
 
 _CACHE_MAX_SIZE = 10  # Max number of cached indexes to keep in memory
+
+
+def _duplicate_clusters_response(clusters: list[DuplicateCluster]) -> str:
+    """Return the MCP JSON response for duplicate cluster results."""
+    if not clusters:
+        return json.dumps({"error": "No duplicate clusters found."})
+    return json.dumps(format_duplicate_clusters("Duplicate clusters", clusters))
 
 
 async def _get_index(
@@ -56,8 +64,11 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         instructions=(
             "Instant code search for any local or remote git repository. "
             "Call `search` to find relevant code; call `find_related` on a result to discover similar code elsewhere. "
+            "Call `find_duplicates` to identify grouped duplicate implementations and refactoring candidates. "
             "When working in a local project, pass the project root as `repo`. "
             "For remote repos, pass an explicit https:// URL. Never guess or infer URLs. "
+            "To search Markdown, YAML, JSON, or TOML, start the server with `--content docs`, "
+            "`--content config`, or `--content all`. "
             "Prefer these tools over Grep, Glob, or Read for any question about how code works."
         ),
     )
@@ -111,6 +122,67 @@ def create_server(cache: _IndexCache, default_source: str | None = None) -> Fast
         if not results:
             return json.dumps({"error": f"No related chunks found for {file_path}:{line}."})
         return json.dumps(format_results(f"Chunks related to {file_path}:{line}", results))
+
+    @server.tool()
+    async def find_duplicates(
+        repo: Annotated[str | None, Field(description=_REPO_DESCRIPTION)] = None,
+        top_k: Annotated[int, Field(description="Number of duplicate clusters to return.", ge=1)] = 5,
+        candidate_k: Annotated[
+            int,
+            Field(description="Semantic neighbors to inspect per chunk before duplicate scoring.", ge=1),
+        ] = 12,
+        language: Annotated[str | None, Field(description="Only compare chunks in this language.")] = None,
+        include_paths: Annotated[
+            list[str] | None,
+            Field(description="Repo-relative file or directory scopes to include in duplicate discovery."),
+        ] = None,
+        exclude_paths: Annotated[
+            list[str] | None,
+            Field(description="Repo-relative file or directory scopes to exclude from duplicate discovery."),
+        ] = None,
+        include_tests: Annotated[bool, Field(description="Include test files in duplicate discovery.")] = False,
+        include_data: Annotated[
+            bool,
+            Field(description="Include static data/config chunks in duplicate discovery."),
+        ] = False,
+        include_scaffolding: Annotated[
+            bool,
+            Field(description="Include import/header/attribute scaffolding in duplicate discovery."),
+        ] = False,
+        min_lines: Annotated[int, Field(description="Minimum lines per chunk.", ge=1)] = 8,
+        min_score: Annotated[float, Field(description="Minimum duplicate score.", ge=0.0)] = 0.0,
+        min_structural_score: Annotated[
+            float,
+            Field(description="Minimum structural similarity score.", ge=0.0),
+        ] = DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        min_cluster_size: Annotated[int, Field(description="Minimum chunks per cluster.", ge=2)] = 2,
+    ) -> str:
+        """Find duplicate-code clusters in a codebase.
+
+        Use this to identify grouped duplicate implementations, copy-pasted logic, and refactoring candidates.
+        Pass a git URL or local path as `repo` to index it on demand; indexes are cached for the session.
+        """
+        try:
+            index = await _get_index(repo, default_source, cache)
+        except ValueError as exc:
+            return str(exc)
+
+        clusters = await asyncio.to_thread(
+            index.find_duplicates,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            min_lines=min_lines,
+            min_score=min_score,
+            min_structural_score=min_structural_score,
+            min_cluster_size=min_cluster_size,
+            filter_languages=[language] if language else None,
+            include_paths=include_paths,
+            exclude_paths=exclude_paths,
+            include_tests=include_tests,
+            include_data=include_data,
+            include_scaffolding=include_scaffolding,
+        )
+        return _duplicate_clusters_response(clusters)
 
     return server
 

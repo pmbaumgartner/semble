@@ -279,7 +279,16 @@ Use `semble find-related` to discover code similar to a known location (pass `fi
 semble find-related src/auth.py 42 ./my-project
 ​```
 
-`path` defaults to the current directory when omitted; git URLs are accepted.
+Use `semble find-duplicates` to identify candidate duplicate implementations, copy-pasted logic, and refactoring opportunities:
+
+​```bash
+semble find-duplicates ./my-project
+semble find-duplicates ./my-project --language python
+semble find-duplicates ./my-project --include src --exclude tests
+semble find-duplicates ./my-project --min-cluster-size 3
+​```
+
+`path` defaults to the current directory when omitted; git URLs are accepted. Duplicate discovery returns candidate clusters with at least two chunks and skips test-looking paths plus low-signal static data/config and import/header scaffolding by default. Use `--include`, `--exclude`, `--include-tests`, `--include-data`, and `--include-scaffolding` to adjust only the duplicate scan; these filters do not change the indexed file set or normal search behavior.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
@@ -289,7 +298,8 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 2. Use `--content docs` for documentation, `--content config` for config files, or `--content all` for everything.
 3. Inspect full files only when the returned chunk does not give enough context.
 4. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
-5. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
+5. Use `semble find-duplicates` when looking for candidate duplicate implementations, copy-pasted logic, or refactoring opportunities; verify clusters before changing code.
+6. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
 ```
 
 ### Sub-agent

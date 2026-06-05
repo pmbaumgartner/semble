@@ -4,22 +4,56 @@ import json
 import re
 import sys
 import warnings
+from enum import Enum
+from importlib.resources import files
 from importlib.util import find_spec
+from pathlib import Path
 from shutil import rmtree
 from typing import Literal
 
 from model2vec.utils import get_package_extras
 
 from semble.cache import find_index_from_cache_folder, resolve_cache_folder
+from semble.duplicates.search import DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE
 from semble.index import SembleIndex
 from semble.index.types import PersistencePath
 from semble.stats import format_savings_report
 from semble.types import ContentType
-from semble.utils import format_results, is_git_url, resolve_chunk
+from semble.utils import (
+    format_duplicate_clusters,
+    format_duplicate_clusters_compact,
+    format_results,
+    is_git_url,
+    resolve_chunk,
+)
 
-_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "install", "uninstall", "savings", "-h", "--help", "clear"})
+_CLI_DISPATCH_ARGS = frozenset(
+    {
+        "search",
+        "find-related",
+        "find-duplicates",
+        "init",
+        "install",
+        "uninstall",
+        "savings",
+        "-h",
+        "--help",
+        "clear",
+    }
+)
 _CLEAR_CHOICE = Literal["all", "index", "savings"]
 
+
+class Agent(str, Enum):
+    CLAUDE = "claude"
+    COPILOT = "copilot"
+    CURSOR = "cursor"
+    GEMINI = "gemini"
+    KIRO = "kiro"
+    OPENCODE = "opencode"
+
+
+_DEFAULT_AGENT = Agent.CLAUDE
 _SHA_256_REGEX = re.compile(r"^[a-f0-9]{64}$")
 
 
@@ -40,6 +74,12 @@ def _maybe_save_index(index: SembleIndex, path: str) -> None:
             index.save(cache_folder)
         except Exception as e:
             print(f"Error saving index: {e}", file=sys.stderr)
+
+
+def _agent_path(agent: Agent) -> Path:
+    """Return the project-relative path where the semble sub-agent file should be written."""
+    base_dir = ".github" if agent is Agent.COPILOT else f".{agent.value}"
+    return Path(base_dir) / "agents" / "semble-search.md"
 
 
 def _add_content_args(p: argparse.ArgumentParser) -> None:
@@ -90,6 +130,18 @@ def _mcp_main() -> None:
     asyncio.run(serve(args.path, ref=args.ref, content=content))
 
 
+def _run_init(*, agent: Agent = _DEFAULT_AGENT, force: bool = False) -> None:
+    """Write the semble sub-agent file for the given coding agent into the current project."""
+    dest = _agent_path(agent)
+    if dest.exists() and not force:
+        print(f"{dest} already exists. Run with --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    content = files("semble").joinpath(f"agents/{agent.value}.md").read_text(encoding="utf-8")
+    dest.write_text(content, encoding="utf-8")
+    print(f"Created {dest}")
+
+
 def _resolve_content(content: list[str], include_text_files: bool) -> list[ContentType]:
     """Resolve --content and the deprecated --include-text-files into a list of ContentType values."""
     if include_text_files:
@@ -136,6 +188,30 @@ def _run_find_related(path: str, file_path: str, line: int, top_k: int, content:
     )
     print(json.dumps(out))
     _maybe_save_index(index, path)
+
+
+def _run_find_duplicates(args: argparse.Namespace) -> None:
+    """Handle the `find-duplicates` subcommand."""
+    content = _resolve_content(args.content, args.include_text_files)
+    index = _load_index(args.path, content)
+    clusters = index.find_duplicates(
+        top_k=args.top_k,
+        candidate_k=args.candidate_k,
+        min_lines=args.min_lines,
+        min_score=args.min_score,
+        min_structural_score=args.min_structural_score,
+        min_cluster_size=args.min_cluster_size,
+        filter_languages=[args.language] if args.language else None,
+        include_paths=args.include_paths,
+        exclude_paths=args.exclude_paths,
+        include_tests=args.include_tests,
+        include_data=args.include_data,
+        include_scaffolding=args.include_scaffolding,
+    )
+    formatter = format_duplicate_clusters_compact if args.detail == "compact" else format_duplicate_clusters
+    out = formatter("Duplicate clusters", clusters) if clusters else {"error": "No duplicate clusters found."}
+    print(json.dumps(out))
+    _maybe_save_index(index, args.path)
 
 
 def _run_clear(clear_type: _CLEAR_CHOICE) -> None:
@@ -187,6 +263,70 @@ def _cli_main() -> None:
     related_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of results (default: 5).")
     _add_content_args(related_p)
 
+    duplicates_p = sub.add_parser("find-duplicates", help="Find duplicate-code clusters.")
+    duplicates_p.add_argument("path", nargs="?", default=".", help="Local path or git URL (default: current directory).")
+    duplicates_p.add_argument("-k", "--top-k", type=int, default=5, help="Number of duplicate clusters (default: 5).")
+    duplicates_p.add_argument(
+        "--candidate-k",
+        type=int,
+        default=12,
+        help="Semantic neighbors to inspect per chunk before scoring (default: 12).",
+    )
+    duplicates_p.add_argument("--language", help="Only compare chunks in this language.")
+    duplicates_p.add_argument(
+        "--include",
+        action="append",
+        dest="include_paths",
+        help="File or directory scope to include in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--exclude",
+        action="append",
+        dest="exclude_paths",
+        help="File or directory scope to exclude from duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include test files in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-data",
+        action="store_true",
+        help="Include static data/config chunks in duplicate discovery.",
+    )
+    duplicates_p.add_argument(
+        "--include-scaffolding",
+        action="store_true",
+        help="Include import/header/attribute scaffolding in duplicate discovery.",
+    )
+    duplicates_p.add_argument("--min-lines", type=int, default=8, help="Minimum lines per chunk (default: 8).")
+    duplicates_p.add_argument("--min-score", type=float, default=0.0, help="Minimum duplicate score (default: 0.0).")
+    duplicates_p.add_argument(
+        "--min-structural-score",
+        type=float,
+        default=DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE,
+        help=f"Minimum structural similarity score (default: {DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE:.2f}).",
+    )
+    duplicates_p.add_argument("--min-cluster-size", type=int, default=2, help="Minimum chunks per cluster (default: 2).")
+    duplicates_p.add_argument(
+        "--detail",
+        choices=["compact", "full"],
+        default="full",
+        help="Duplicate output detail level: compact summary or full result JSON (default: full).",
+    )
+    _add_content_args(duplicates_p)
+
+    init_p = sub.add_parser("init", help="Write a semble sub-agent file for your coding agent.")
+    init_p.add_argument(
+        "--agent",
+        "-a",
+        default=_DEFAULT_AGENT.value,
+        choices=[a.value for a in Agent],
+        help=f"Coding agent to set up (default: {_DEFAULT_AGENT.value}).",
+    )
+    init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
+
     savings_p = sub.add_parser("savings", help="Show token savings and usage stats.")
     savings_p.add_argument("--verbose", action="store_true", help="Also show usage breakdown by call type.")
 
@@ -195,7 +335,9 @@ def _cli_main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "savings":
+    if args.command == "init":
+        _run_init(agent=Agent(args.agent), force=args.force)
+    elif args.command == "savings":
         print(format_savings_report(verbose=args.verbose))
     elif args.command in ("install", "uninstall"):
         from semble.installer import run
@@ -209,3 +351,5 @@ def _cli_main() -> None:
         _run_find_related(
             args.path, args.file_path, args.line, args.top_k, _resolve_content(args.content, args.include_text_files)
         )
+    elif args.command == "find-duplicates":
+        _run_find_duplicates(args)

@@ -8,6 +8,7 @@ from semble.installer import run
 from semble.installer.agents import (
     _STDIO_SERVER_CONFIG,
     AGENTS,
+    INSTRUCTIONS,
     SEMBLE_END,
     SEMBLE_START,
     _opencode_mcp_path,
@@ -326,6 +327,19 @@ def test_apply_instructions_none():
     """_apply_instructions returns None for agents with no instructions_path."""
     cursor = next(a for a in AGENTS if a.id == "cursor")
     assert _apply_instructions(cursor, "install") is None
+
+
+def test_installer_instructions_document_duplicate_discovery(claude_agent):
+    """Generated AGENTS.md guidance stays aligned with duplicate-discovery features."""
+    assert "mcp__semble__find_duplicates" in INSTRUCTIONS
+    assert "semble find-duplicates" in INSTRUCTIONS
+    assert "--include-text-files" not in INSTRUCTIONS
+
+    result = _apply_instructions(claude_agent, "install")
+    assert result.action == "created"
+    content = claude_agent.instructions_path.read_text(encoding="utf-8")
+    assert "mcp__semble__find_duplicates" in content
+    assert "semble find-duplicates" in content
 
 
 def test_apply_subagent(tmp_path):

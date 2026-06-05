@@ -42,9 +42,10 @@ INSTRUCTIONS = f"""\
 {SEMBLE_START}
 ## Semble Code Search
 
-A `semble` MCP server is available with two tools:
+A `semble` MCP server is available with these tools:
 - `mcp__semble__search` — search the codebase with a natural-language or code query.
 - `mcp__semble__find_related` — find code similar to a specific file and line.
+- `mcp__semble__find_duplicates` — find grouped duplicate implementations and refactoring candidates.
 
 Always call `mcp__semble__search` before using Grep, Glob, or Read to explore the codebase. Use Grep/Glob/Read only for exact path lookup, exhaustive literal matches, or when the returned chunk lacks enough context.
 
@@ -57,10 +58,12 @@ semble search "authentication flow" ./my-project
 semble search "deployment guide" ./my-project --content docs
 semble search "database host port" ./my-project --content config
 semble find-related src/auth.py 42 ./my-project
+semble find-duplicates ./my-project
+semble find-duplicates ./my-project --include src --exclude tests
 semble search "save model to disk" ./my-project --top-k 10
 ```
 
-The index is built on first run and cached automatically. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble`.
+The index is built on first run and cached automatically. Duplicate discovery returns candidate clusters to inspect and skips test-looking paths plus low-signal static data/config and import/header scaffolding by default. If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble`.
 
 ### Workflow
 
@@ -68,7 +71,8 @@ The index is built on first run and cached automatically. If `semble` is not on 
 2. Use `--content docs` for documentation, `--content config` for config files, or `--content all` for everything.
 3. Inspect full files only when the returned chunk does not give enough context.
 4. Optionally use `mcp__semble__find_related` with a promising result's `file_path` and `line` to discover related implementations.
-5. Use Grep/Glob/Read only when you need exhaustive literal matches or quick confirmation of an exact string.
+5. Use `mcp__semble__find_duplicates` or `semble find-duplicates` when looking for candidate duplicate implementations, copy-pasted logic, or refactoring opportunities; verify clusters before changing code.
+6. Use Grep/Glob/Read only when you need exhaustive literal matches or quick confirmation of an exact string.
 {SEMBLE_END}
 """
 
