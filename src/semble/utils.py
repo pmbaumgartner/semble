@@ -54,30 +54,27 @@ def format_duplicate_clusters_compact(label: str, clusters: list[DuplicateCluste
 
 def _compact_duplicate_cluster(cluster: DuplicateCluster) -> dict[str, Any]:
     shown_pairs = cluster.pairs[:_MAX_COMPACT_DUPLICATE_PAIRS_SHOWN]
-    out = {
+    return {
         "score": cluster.score,
         "members": [_compact_chunk(member) for member in cluster.members],
-        "top_pairs": [_compact_duplicate_pair(pair) for pair in shown_pairs],
+        "pairs": [
+            _compact_duplicate_pair(pair, include_content=index == 0) for index, pair in enumerate(shown_pairs)
+        ],
         "pairs_not_shown": max(len(cluster.pairs) - len(shown_pairs), 0),
     }
-    if cluster.pairs:
-        strongest = cluster.pairs[0]
-        out["strongest_pair"] = {
-            "left": _compact_match(strongest.left, strongest.left_content),
-            "right": _compact_match(strongest.right, strongest.right_content),
-            "score": strongest.score,
-            "signals": _compact_duplicate_signals(strongest),
-        }
-    return out
 
 
-def _compact_duplicate_pair(pair: DuplicatePair) -> dict[str, Any]:
-    return {
+def _compact_duplicate_pair(pair: DuplicatePair, *, include_content: bool) -> dict[str, Any]:
+    out = {
         "left": _compact_chunk(pair.left),
         "right": _compact_chunk(pair.right),
         "score": pair.score,
         "signals": _compact_duplicate_signals(pair),
     }
+    if include_content:
+        out["left_content"] = pair.left_content
+        out["right_content"] = pair.right_content
+    return out
 
 
 def _compact_chunk(chunk: Chunk) -> dict[str, Any]:
@@ -86,13 +83,6 @@ def _compact_chunk(chunk: Chunk) -> dict[str, Any]:
         "file_path": chunk.file_path,
         "start_line": chunk.start_line,
         "end_line": chunk.end_line,
-    }
-
-
-def _compact_match(chunk: Chunk, content: str) -> dict[str, Any]:
-    return {
-        **_compact_chunk(chunk),
-        "content": content,
     }
 
 

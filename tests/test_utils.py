@@ -88,8 +88,8 @@ def test_format_duplicate_clusters_allows_empty_clusters() -> None:
     assert format_duplicate_clusters("Duplicate clusters", []) == {"query": "Duplicate clusters", "clusters": []}
 
 
-def test_format_duplicate_clusters_compact_summarizes_members_pairs_and_strongest_match() -> None:
-    """Compact duplicate JSON mirrors the old human summary without full pair payloads."""
+def test_format_duplicate_clusters_compact_summarizes_members_and_pairs() -> None:
+    """Compact duplicate JSON keeps the full schema shape while trimming later pair content."""
     left = make_chunk("import os\n\ndef left():\n    return os.getcwd()", "src/left.py")
     right = make_chunk("import os\n\ndef right():\n    return os.getcwd()", "src/right.py")
     pair = make_duplicate_pair(
@@ -110,13 +110,12 @@ def test_format_duplicate_clusters_compact_summarizes_members_pairs_and_stronges
         {"location": "src/left.py:1-4", "file_path": "src/left.py", "start_line": 1, "end_line": 4},
         {"location": "src/right.py:1-4", "file_path": "src/right.py", "start_line": 1, "end_line": 4},
     ]
-    assert cluster["top_pairs"][0]["left"]["location"] == "src/left.py:1-4"
-    assert cluster["top_pairs"][0]["signals"]["ast_type_jaccard"] == 0.6
+    assert cluster["pairs"][0]["left"]["location"] == "src/left.py:1-4"
+    assert cluster["pairs"][0]["signals"]["ast_type_jaccard"] == 0.6
     assert cluster["pairs_not_shown"] == 0
-    assert cluster["strongest_pair"]["left"]["content"] == "def left():\n    return os.getcwd()"
-    assert cluster["strongest_pair"]["right"]["content"] == "def right():\n    return os.getcwd()"
+    assert cluster["pairs"][0]["left_content"] == "def left():\n    return os.getcwd()"
+    assert cluster["pairs"][0]["right_content"] == "def right():\n    return os.getcwd()"
     assert "content" not in cluster["members"][0]
-    assert "left_content" not in cluster["top_pairs"][0]
 
 
 def test_format_duplicate_clusters_compact_caps_top_pairs() -> None:
@@ -124,6 +123,10 @@ def test_format_duplicate_clusters_compact_caps_top_pairs() -> None:
     out = format_duplicate_clusters_compact("Duplicate clusters", [_multi_pair_cluster(6)])
     cluster = out["clusters"][0]
 
-    assert len(cluster["top_pairs"]) == 5
+    assert len(cluster["pairs"]) == 5
     assert cluster["pairs_not_shown"] == 1
-    assert cluster["top_pairs"][-1]["left"]["location"] == "src/item4.py:1-2"
+    assert cluster["pairs"][-1]["left"]["location"] == "src/item4.py:1-2"
+    assert "left_content" in cluster["pairs"][0]
+    assert "right_content" in cluster["pairs"][0]
+    assert "left_content" not in cluster["pairs"][1]
+    assert "right_content" not in cluster["pairs"][1]

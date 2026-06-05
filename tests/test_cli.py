@@ -208,9 +208,10 @@ def test_cli_find_duplicates_compact_detail(
     out = json.loads(capsys.readouterr().out)
     assert out["detail"] == "compact"
     assert out["clusters"][0]["members"][0]["location"] == "src/left.py:1-2"
-    assert out["clusters"][0]["top_pairs"][0]["signals"]["semantic_score"] == 0.9
-    assert out["clusters"][0]["strongest_pair"]["left"]["content"] == "def left():\n    return 1"
-    assert "pairs" not in out["clusters"][0]
+    assert out["clusters"][0]["pairs"][0]["signals"]["semantic_score"] == 0.9
+    assert out["clusters"][0]["pairs"][0]["left_content"] == "def left():\n    return 1"
+    assert "top_pairs" not in out["clusters"][0]
+    assert "strongest_pair" not in out["clusters"][0]
 
 
 def test_cli_find_duplicates_uses_git_url(
