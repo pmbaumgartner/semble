@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
 from semble.types import Chunk, DuplicateCluster, DuplicatePair, SearchResult
 
@@ -40,7 +40,11 @@ def format_results(query: str, results: list[SearchResult]) -> dict[str, Any]:
 
 def format_duplicate_clusters(label: str, clusters: list[DuplicateCluster]) -> dict[str, Any]:
     """Render DuplicateCluster objects as a JSONable object."""
-    return {"query": label, "clusters": [cluster.to_dict() for cluster in clusters]}
+    return {
+        "query": label,
+        "detail": "full",
+        "clusters": [_format_duplicate_cluster(cluster, max_pairs=None, content_pairs="all") for cluster in clusters],
+    }
 
 
 def format_duplicate_clusters_compact(label: str, clusters: list[DuplicateCluster]) -> dict[str, Any]:
@@ -48,55 +52,51 @@ def format_duplicate_clusters_compact(label: str, clusters: list[DuplicateCluste
     return {
         "query": label,
         "detail": "compact",
-        "clusters": [_compact_duplicate_cluster(cluster) for cluster in clusters],
+        "clusters": [
+            _format_duplicate_cluster(
+                cluster,
+                max_pairs=_MAX_COMPACT_DUPLICATE_PAIRS_SHOWN,
+                content_pairs="first",
+            )
+            for cluster in clusters
+        ],
     }
 
 
-def _compact_duplicate_cluster(cluster: DuplicateCluster) -> dict[str, Any]:
-    shown_pairs = cluster.pairs[:_MAX_COMPACT_DUPLICATE_PAIRS_SHOWN]
+def _format_duplicate_cluster(
+    cluster: DuplicateCluster,
+    *,
+    max_pairs: int | None,
+    content_pairs: Literal["all", "first"],
+) -> dict[str, Any]:
+    shown_pairs = cluster.pairs if max_pairs is None else cluster.pairs[:max_pairs]
     return {
         "score": cluster.score,
-        "members": [_compact_chunk(member) for member in cluster.members],
+        "members": [member.location for member in cluster.members],
         "pairs": [
-            _compact_duplicate_pair(pair, include_content=index == 0) for index, pair in enumerate(shown_pairs)
+            _format_duplicate_pair(
+                pair,
+                include_content=content_pairs == "all" or index == 0,
+            )
+            for index, pair in enumerate(shown_pairs)
         ],
         "pairs_not_shown": max(len(cluster.pairs) - len(shown_pairs), 0),
     }
 
 
-def _compact_duplicate_pair(pair: DuplicatePair, *, include_content: bool) -> dict[str, Any]:
-    out = {
-        "left": _compact_chunk(pair.left),
-        "right": _compact_chunk(pair.right),
-        "score": pair.score,
-        "signals": _compact_duplicate_signals(pair),
-    }
-    if include_content:
-        out["left_content"] = pair.left_content
-        out["right_content"] = pair.right_content
-    return out
-
-
-def _compact_chunk(chunk: Chunk) -> dict[str, Any]:
+def _format_duplicate_pair(pair: DuplicatePair, *, include_content: bool) -> dict[str, Any]:
     return {
-        "location": chunk.location,
-        "file_path": chunk.file_path,
-        "start_line": chunk.start_line,
-        "end_line": chunk.end_line,
+        "left": _format_duplicate_pair_side(pair.left, pair.left_content, include_content=include_content),
+        "right": _format_duplicate_pair_side(pair.right, pair.right_content, include_content=include_content),
+        "score": pair.score,
+        "signals": pair.signals.to_dict(),
     }
 
 
-def _compact_duplicate_signals(pair: DuplicatePair) -> dict[str, float]:
-    signals = pair.signals
-    out = {
-        "semantic_score": signals.semantic_score,
-        "structural_score": signals.structural_score,
-        "token_jaccard": signals.token_jaccard,
-    }
-    if signals.ast_type_jaccard is not None:
-        out["ast_type_jaccard"] = signals.ast_type_jaccard
-    if signals.ast_shape_jaccard is not None:
-        out["ast_shape_jaccard"] = signals.ast_shape_jaccard
+def _format_duplicate_pair_side(chunk: Chunk, content: str, *, include_content: bool) -> dict[str, str]:
+    out = {"location": chunk.location}
+    if include_content:
+        out["content"] = content
     return out
 
 

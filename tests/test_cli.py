@@ -158,8 +158,10 @@ def test_cli_find_duplicates_maps_options(
     )
     out = json.loads(capsys.readouterr().out)
     assert out["query"] == "Duplicate clusters"
-    assert out["clusters"][0]["members"][0]["file_path"] == "src/left.py"
+    assert out["detail"] == "full"
+    assert out["clusters"][0]["members"][0] == "src/left.py:1-2"
     assert out["clusters"][0]["pairs"][0]["signals"]["semantic_score"] == 0.9
+    assert out["clusters"][0]["pairs"][0]["left"]["content"] == "def left():\n    return 1"
 
 
 def test_cli_find_duplicates_empty_state(
@@ -207,9 +209,9 @@ def test_cli_find_duplicates_compact_detail(
 
     out = json.loads(capsys.readouterr().out)
     assert out["detail"] == "compact"
-    assert out["clusters"][0]["members"][0]["location"] == "src/left.py:1-2"
+    assert out["clusters"][0]["members"][0] == "src/left.py:1-2"
     assert out["clusters"][0]["pairs"][0]["signals"]["semantic_score"] == 0.9
-    assert out["clusters"][0]["pairs"][0]["left_content"] == "def left():\n    return 1"
+    assert out["clusters"][0]["pairs"][0]["left"]["content"] == "def left():\n    return 1"
     assert "top_pairs" not in out["clusters"][0]
     assert "strongest_pair" not in out["clusters"][0]
 

@@ -78,14 +78,37 @@ def test_format_duplicate_clusters_returns_jsonable_shape() -> None:
     out = format_duplicate_clusters("Duplicate clusters", [make_duplicate_cluster()])
 
     assert out["query"] == "Duplicate clusters"
+    assert out["detail"] == "full"
     assert len(out["clusters"]) == 1
-    assert out["clusters"][0]["score"] == 0.84
-    assert out["clusters"][0]["pairs"][0]["signals"]["token_jaccard"] == 0.7
+    cluster = out["clusters"][0]
+    assert cluster["score"] == 0.84
+    assert cluster["members"] == ["src/left.py:1-2", "src/right.py:1-2"]
+    assert cluster["pairs_not_shown"] == 0
+    assert cluster["pairs"][0]["left"] == {
+        "location": "src/left.py:1-2",
+        "content": "def left():\n    return 1",
+    }
+    assert cluster["pairs"][0]["right"] == {
+        "location": "src/right.py:1-2",
+        "content": "def right():\n    return 1",
+    }
+    assert cluster["pairs"][0]["signals"] == {
+        "semantic_score": 0.9,
+        "structural_score": 0.8,
+        "token_jaccard": 0.7,
+        "ast_type_jaccard": None,
+        "ast_shape_jaccard": None,
+    }
+    assert "left_content" not in cluster["pairs"][0]
 
 
 def test_format_duplicate_clusters_allows_empty_clusters() -> None:
     """The formatter is pure; callers decide whether to replace empty clusters with an error."""
-    assert format_duplicate_clusters("Duplicate clusters", []) == {"query": "Duplicate clusters", "clusters": []}
+    assert format_duplicate_clusters("Duplicate clusters", []) == {
+        "query": "Duplicate clusters",
+        "detail": "full",
+        "clusters": [],
+    }
 
 
 def test_format_duplicate_clusters_compact_summarizes_members_and_pairs() -> None:
@@ -106,16 +129,23 @@ def test_format_duplicate_clusters_compact_summarizes_members_and_pairs() -> Non
 
     assert out["detail"] == "compact"
     assert cluster["score"] == 0.84
-    assert cluster["members"] == [
-        {"location": "src/left.py:1-4", "file_path": "src/left.py", "start_line": 1, "end_line": 4},
-        {"location": "src/right.py:1-4", "file_path": "src/right.py", "start_line": 1, "end_line": 4},
-    ]
-    assert cluster["pairs"][0]["left"]["location"] == "src/left.py:1-4"
-    assert cluster["pairs"][0]["signals"]["ast_type_jaccard"] == 0.6
+    assert cluster["members"] == ["src/left.py:1-4", "src/right.py:1-4"]
+    assert cluster["pairs"][0]["left"] == {
+        "location": "src/left.py:1-4",
+        "content": "def left():\n    return os.getcwd()",
+    }
+    assert cluster["pairs"][0]["right"] == {
+        "location": "src/right.py:1-4",
+        "content": "def right():\n    return os.getcwd()",
+    }
+    assert cluster["pairs"][0]["signals"] == {
+        "semantic_score": 0.9,
+        "structural_score": 0.8,
+        "token_jaccard": 0.7,
+        "ast_type_jaccard": 0.6,
+        "ast_shape_jaccard": None,
+    }
     assert cluster["pairs_not_shown"] == 0
-    assert cluster["pairs"][0]["left_content"] == "def left():\n    return os.getcwd()"
-    assert cluster["pairs"][0]["right_content"] == "def right():\n    return os.getcwd()"
-    assert "content" not in cluster["members"][0]
 
 
 def test_format_duplicate_clusters_compact_caps_top_pairs() -> None:
@@ -126,7 +156,7 @@ def test_format_duplicate_clusters_compact_caps_top_pairs() -> None:
     assert len(cluster["pairs"]) == 5
     assert cluster["pairs_not_shown"] == 1
     assert cluster["pairs"][-1]["left"]["location"] == "src/item4.py:1-2"
-    assert "left_content" in cluster["pairs"][0]
-    assert "right_content" in cluster["pairs"][0]
-    assert "left_content" not in cluster["pairs"][1]
-    assert "right_content" not in cluster["pairs"][1]
+    assert "content" in cluster["pairs"][0]["left"]
+    assert "content" in cluster["pairs"][0]["right"]
+    assert "content" not in cluster["pairs"][1]["left"]
+    assert "content" not in cluster["pairs"][1]["right"]

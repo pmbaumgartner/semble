@@ -257,7 +257,7 @@ async def test_tool_index_failure(cache: _IndexCache, tool: str, args: dict[str,
             "find_duplicates",
             [make_duplicate_cluster()],
             None,
-            ['"Duplicate clusters"', '"src/left.py"'],
+            ['"Duplicate clusters"', '"src/left.py:1-2"'],
             id="find_duplicates_with_results",
         ),
         pytest.param(
@@ -315,7 +315,9 @@ async def test_find_duplicates_runs_scan_in_thread(cache: _IndexCache) -> None:
 
     out = _tool_json(result)
     assert out["query"] == "Duplicate clusters"
-    assert out["clusters"][0]["members"][0]["file_path"] == "src/left.py"
+    assert out["detail"] == "full"
+    assert out["clusters"][0]["members"][0] == "src/left.py:1-2"
+    assert out["clusters"][0]["pairs"][0]["left"]["content"] == "def left():\n    return 1"
     mock_get.assert_awaited_once_with("/some/path")
     mock_to_thread.assert_awaited_once_with(
         fake_index.find_duplicates,
