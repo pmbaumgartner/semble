@@ -19,7 +19,13 @@ from semble.index import SembleIndex
 from semble.index.types import PersistencePath
 from semble.stats import format_savings_report
 from semble.types import ContentType
-from semble.utils import format_duplicate_clusters, format_results, is_git_url, resolve_chunk
+from semble.utils import (
+    format_duplicate_clusters,
+    format_duplicate_clusters_compact,
+    format_results,
+    is_git_url,
+    resolve_chunk,
+)
 
 _CLI_DISPATCH_ARGS = frozenset(
     {
@@ -202,7 +208,8 @@ def _run_find_duplicates(args: argparse.Namespace) -> None:
         include_data=args.include_data,
         include_scaffolding=args.include_scaffolding,
     )
-    out = format_duplicate_clusters("Duplicate clusters", clusters) if clusters else {"error": "No duplicate clusters found."}
+    formatter = format_duplicate_clusters_compact if args.detail == "compact" else format_duplicate_clusters
+    out = formatter("Duplicate clusters", clusters) if clusters else {"error": "No duplicate clusters found."}
     print(json.dumps(out))
     _maybe_save_index(index, args.path)
 
@@ -302,6 +309,12 @@ def _cli_main() -> None:
         help=f"Minimum structural similarity score (default: {DEFAULT_DUPLICATE_MIN_STRUCTURAL_SCORE:.2f}).",
     )
     duplicates_p.add_argument("--min-cluster-size", type=int, default=2, help="Minimum chunks per cluster (default: 2).")
+    duplicates_p.add_argument(
+        "--detail",
+        choices=["compact", "full"],
+        default="full",
+        help="Duplicate output detail level: compact summary or full result JSON (default: full).",
+    )
     _add_content_args(duplicates_p)
 
     init_p = sub.add_parser("init", help="Write a semble sub-agent file for your coding agent.")

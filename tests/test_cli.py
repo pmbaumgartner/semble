@@ -194,6 +194,25 @@ def test_cli_find_duplicates_empty_state(
     assert json.loads(capsys.readouterr().out) == {"error": "No duplicate clusters found."}
 
 
+def test_cli_find_duplicates_compact_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """find-duplicates --detail compact prints compact duplicate JSON."""
+    fake_index = MagicMock()
+    fake_index.find_duplicates.return_value = [make_duplicate_cluster()]
+    monkeypatch.setattr(sys, "argv", ["semble", "find-duplicates", "/some/path", "--detail", "compact"])
+    with patch("semble.cli.SembleIndex.from_path", return_value=fake_index):
+        _cli_main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["detail"] == "compact"
+    assert out["clusters"][0]["members"][0]["location"] == "src/left.py:1-2"
+    assert out["clusters"][0]["top_pairs"][0]["signals"]["semantic_score"] == 0.9
+    assert out["clusters"][0]["strongest_pair"]["left"]["content"] == "def left():\n    return 1"
+    assert "pairs" not in out["clusters"][0]
+
+
 def test_cli_find_duplicates_uses_git_url(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
